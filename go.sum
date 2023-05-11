@@ -1,0 +1,10 @@
+github.com/iovisor/gobpf v0.2.1-0.20221005153822-16120a1bf4d4 h1:WpizD4VUT5V+VcaQSvW5BlvFpQYrd2974H9KbiGa5/0=
+github.com/iovisor/gobpf v0.2.1-0.20221005153822-16120a1bf4d4/go.mod h1:WSY9Jj5RhdgC3ci1QaacvbFdQ8cbrEjrpiZbLHLt2s4=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk=
+github.com/tklauser/numcpus v0.6.1/go.mod h1:1XfjsgE2zo8GVw7POkMbHENHzVg3GzmoZ9fESEdAacY=
+golang.org/x/sys v0.8.0 h1:EBmGv8NaZBZTWvrbjNoL6HVt+IVy3QDQpJs7VRIw3tU=
+golang.org/x/sys v0.8.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+modernc.org/libc v1.22.6 h1:cbXU8R+A6aOjRuhsFh3nbDWXO/Hs4ClJRXYB11KmPDo=
+modernc.org/libc v1.22.6/go.mod h1:jj+Z7dTNX8fBScMVNRAYZ/jF91K8fdT2hYMThc3YjBY=
