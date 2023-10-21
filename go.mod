@@ -1,11 +1,10 @@
 module github.com/maxgio92/perf-profiler-go
 
-go 1.20
+go 1.21.1
 
 require (
-	github.com/iovisor/gobpf v0.2.1-0.20221005153822-16120a1bf4d4
+	github.com/maxgio92/gobpf v0.0.0-20231021162119-ff4afec32fd2
 	github.com/pkg/errors v0.9.1
-	github.com/tklauser/numcpus v0.6.1
-	golang.org/x/sys v0.8.0
-	modernc.org/libc v1.22.6
+	golang.org/x/sys v0.13.0
+	modernc.org/libc v1.27.0
 )
