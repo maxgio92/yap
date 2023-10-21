@@ -22,31 +22,9 @@
 
 const int kNumMapEntries = 65536;
 
-// bcc way
 BPF_STACK_TRACE(stack_traces, kNumMapEntries);
 
-/*
-// libbpf way
-struct {
-  __uint(type, BPF_MAP_TYPE_STACK_TRACE);
-  __uint(max_entries, kNumMapEntries);
-   __uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
-  __type(key, u32);
-} stack_traces SEC(".maps");
-*/
-
-// bcc way
 BPF_HASH(histogram, struct stack_trace_key_t, uint64_t, kNumMapEntries);
-
-/*
-// libbpf way
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, kNumMapEntries);
-  __type(key, struct stack_trace_key_t);
-  __type(value, u64);
-} histogram SEC(".maps");
-*/
 
 int sample_stack_trace(struct bpf_perf_event_data* ctx) {
   // Sample the user stack trace, and record in the stack_traces structure.
@@ -62,33 +40,9 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx) {
   key.user_stack_id = user_stack_id;
   key.kernel_stack_id = kernel_stack_id;
 
-  // BCC way
-  //u64 zero = 0;
-  //histogram.lookup_or_try_init(&key, &zero);
   histogram.atomic_increment(key);
 
-  //// libbpf wa*y
-  //u64* count = bpf_map_lookup_elem(&histogram, &key);
-  //if(count){
-  //   u64 c = *count;
-  //   c++;
-  //   bpf_map_update_elem(&histogram, &key, &c, BPF_EXIST);
-  //}else{
-  //   u64 one = 1;
-  //   bpf_map_update_elem(&histogram, &key, &one, BPF_NOEXIST);
-  //}
-
-  // DEBUG
-  //bpf_trace_printk("Stack trace id: tgid %d\n", sizeof("Stack trace id: tgid %d\n"), key.pid);
-  //bpf_trace_printk("Stack trace id: user stack id %d - kernel stack id %d \n", sizeof("Stack trace id: user stack id %d - kernel stack id %d \n"), key.user_stack_id);
-  bpf_trace_printk("Key: Current tgid %d;", (u64)pid);
-  bpf_trace_printk("Key: User stack id is %d;", (u64)user_stack_id);
-  bpf_trace_printk("Key: Kernel stack id is %d;", (u64)kernel_stack_id);
-
   u64 *count = histogram.lookup(&key);
-  if (count) {
-    bpf_trace_printk("Stack trace count is %llu\n", (u64*)*count);
-  }
 
   return 0;
 }

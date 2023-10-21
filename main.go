@@ -6,13 +6,13 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"github.com/iovisor/gobpf/bcc"
-	"github.com/iovisor/gobpf/pkg/ksym"
+	"os"
+	"time"
+
+	"github.com/maxgio92/gobpf/bcc"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 	libc "modernc.org/libc/sys/types"
-	"os"
-	"time"
 
 	. "github.com/maxgio92/perf-profiler-go/internal/utils"
 )
@@ -23,18 +23,18 @@ type Options struct {
 }
 
 type HistogramKey struct {
-	Pid libc.Pid_t
+	Pid int32
 
 	// UserStackId, an index into the stack-traces map.
-	UserStackId libc.U_int32_t
+	UserStackId uint32
 
 	// KernelStackId, an index into the stack-traces map.
-	KernelStackId libc.U_int32_t
+	KernelStackId uint32
 }
 
 // StackTrace is an array of instruction pointers (IP).
 // 127 is the size of the trace, as for the default PERF_MAX_STACK_DEPTH.
-type StackTrace [127]libc.Ulong
+type StackTrace [127]uint64
 
 const (
 	probeFile = "kernel/perf_profiler.bpf.c"
@@ -45,8 +45,7 @@ const (
 
 	samplingPeriodMillis = 11
 
-	userSymUnknown   = "[USER_UNKNOWN]"
-	kernelSymUnknown = "[KERN_UNKNOWN]"
+	symUnknown = "[UNKNOWN]"
 )
 
 func main() {
@@ -127,7 +126,8 @@ func main() {
 
 	time.Sleep(time.Duration(o.duration) * time.Second)
 
-	fmt.Println("Stack trace histogram map")
+	fmt.Printf("PID\t\tTIMES\tKERNEL STACK ID\tKERNEL STACK TRACE\tUSER STACK ID\tUSER STACK TRACE\n")
+
 	for it := histogram.Iter(); it.Next(); {
 		histogramKeyBin := it.Key()
 		count := it.Leaf()
@@ -142,26 +142,26 @@ func main() {
 
 		var symbolsStr string
 
-		fmt.Printf("\tmatched stack trace executed %d times\n\t\tpid: %v\n",
-			binary.LittleEndian.Uint64(count), histogramKey.Pid)
+		fmt.Printf("%v\t%v\t\t", histogramKey.Pid, binary.LittleEndian.Uint64(count))
 
-		fmt.Printf("\t\tkernel stack id: %v\n", histogramKey.KernelStackId)
+		fmt.Printf("%v\t\t", histogramKey.KernelStackId)
 
-		// Check if the trace is of kernel or user stack.
 		if histogramKey.KernelStackId != 0 {
 			stackTrace, err := getStackTrace(stackTraces, histogramKey.KernelStackId)
 			if err == nil && stackTrace != nil {
-				symbolsStr += getStackTraceSyms(stackTrace, kernelSymUnknown)
+				symbolsStr += getStackTraceSyms(bpfModule, int(histogramKey.Pid), stackTrace, false)
 			}
 		}
-		fmt.Printf("\t\tuser stack id: %v\n", histogramKey.UserStackId)
+		fmt.Printf("%v\t\t\t", histogramKey.UserStackId)
 
 		if histogramKey.UserStackId != 0 {
 			stackTrace, err := getStackTrace(stackTraces, histogramKey.UserStackId)
 			if err == nil && stackTrace != nil {
-				symbolsStr += getStackTraceSyms(stackTrace, userSymUnknown)
+				symbolsStr += getStackTraceSyms(bpfModule, int(histogramKey.Pid), stackTrace, true)
 			}
 		}
+
+		fmt.Printf("\n")
 
 		// Increment the result map value for the histogramKey stack symbol string (e.g. "main;subfunc;")
 		result[symbolsStr]++
@@ -186,18 +186,26 @@ func getStackTrace(stackTracesMap *bcc.Table, id libc.U_int32_t) (*StackTrace, e
 	return &stackTrace, nil
 }
 
-func getStackTraceSyms(stackTrace *StackTrace, unknown string) string {
+func getStackTraceSyms(module *bcc.Module, pid int, stackTrace *StackTrace, user bool) string {
 	var symbolsStr string
+	if !user {
+		pid = -1
+	}
 	for _, ip := range stackTrace {
 		if ip != 0 {
-			sym, err := ksym.Ksym(fmt.Sprintf("%016x", ip))
-			if err != nil {
-				sym = unknown
+			sym := module.GetSymbolByAddr(ip, pid)
+			if sym == "" {
+				sym = symUnknown
+				fmt.Printf("%#016x %s; ", ip, sym)
+			} else {
+				fmt.Printf("%s; ", sym)
 			}
-			fmt.Printf("\t\t\t%#016x\t%s\n", ip, sym)
 			symbolsStr += sym
 			symbolsStr += ";"
 		}
 	}
+
+	fmt.Printf("\t")
+
 	return symbolsStr
 }
