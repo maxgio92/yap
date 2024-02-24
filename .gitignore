@@ -1,2 +1,4 @@
 .idea
 /perf-profiler-go
+*.o
+vmlinux.h
