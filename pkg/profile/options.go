@@ -1,5 +1,9 @@
 package profile
 
+import (
+	log "github.com/rs/zerolog"
+)
+
 type ProfileOption func(profile *Profile)
 
 func WithPID(pid int) ProfileOption {
@@ -20,9 +24,9 @@ func WithSamplingPeriodMillis(period uint64) ProfileOption {
 	}
 }
 
-func WithProbeFilepath(path string) ProfileOption {
+func WithProbe(probe []byte) ProfileOption {
 	return func(t *Profile) {
-		t.probeFilepath = path
+		t.probe = probe
 	}
 }
 
@@ -41,5 +45,11 @@ func WithMapStackTraces(name string) ProfileOption {
 func WithMapHistogram(name string) ProfileOption {
 	return func(t *Profile) {
 		t.mapHistogram = name
+	}
+}
+
+func WithLogger(logger log.Logger) ProfileOption {
+	return func(t *Profile) {
+		t.logger = logger
 	}
 }

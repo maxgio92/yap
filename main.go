@@ -8,10 +8,11 @@ import (
 	"path"
 
 	"github.com/maxgio92/cpu-profiler/pkg/profile"
+	log "github.com/rs/zerolog"
 )
 
 //go:embed output/*
-var eBPFObject embed.FS
+var probeFS embed.FS
 
 func main() {
 	var pid, duration int
@@ -36,14 +37,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	probe, err := probeFS.ReadFile("output/profile.bpf.o")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	logger := log.New(os.Stdout).Level(log.DebugLevel)
+
 	profiler := profile.NewProfile(
 		profile.WithPID(pid),
 		profile.WithDuration(duration),
 		profile.WithSamplingPeriodMillis(11),
 		profile.WithProbeName("sample_stack_trace"),
-		profile.WithProbeFilepath("output/profile.o"),
+		profile.WithProbe(probe),
 		profile.WithMapStackTraces("stack_traces"),
 		profile.WithMapHistogram("histogram"),
+		profile.WithLogger(logger),
 	)
 
 	// Run profile.

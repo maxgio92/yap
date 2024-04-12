@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"time"
 	"unsafe"
 
 	bpf "github.com/aquasecurity/libbpfgo"
 	"github.com/pkg/errors"
+	log "github.com/rs/zerolog"
 	"golang.org/x/sys/unix"
 )
 
@@ -30,10 +31,11 @@ type Profile struct {
 	pid                  int
 	duration             int
 	samplingPeriodMillis uint64
-	probeFilepath        string
+	probe                []byte
 	probeName            string
 	mapStackTraces       string
 	mapHistogram         string
+	logger               log.Logger
 }
 
 func NewProfile(opts ...ProfileOption) *Profile {
@@ -46,15 +48,19 @@ func NewProfile(opts ...ProfileOption) *Profile {
 }
 
 func (t *Profile) RunProfile() error {
-	bpfModule, err := bpf.NewModuleFromFile(t.probeFilepath)
+	bpfModule, err := bpf.NewModuleFromBuffer(t.probe, t.probeName)
 	if err != nil {
 		return errors.Wrap(err, "error creating the BPF module object")
 	}
 	defer bpfModule.Close()
 
+	t.logger.Debug().Msg("loading ebpf object")
+
 	if err := bpfModule.BPFLoadObject(); err != nil {
 		return errors.Wrap(err, "error loading the BPF program")
 	}
+
+	t.logger.Debug().Msg("getting the loaded ebpf program")
 
 	prog, err := bpfModule.GetProgram(t.probeName)
 	if err != nil {
@@ -78,6 +84,8 @@ func (t *Profile) RunProfile() error {
 		Sample: t.samplingPeriodMillis * 1000 * 1000,
 	}
 
+	t.logger.Debug().Msg("opening the sampling software cpu block perf event")
+
 	// Create the perf event file descriptor that corresponds to one event that is measured.
 	// We're measuring a clock timer software event just to run the program on a periodic schedule.
 	// When a specified number of clock samples occur, the kernel will trigger the program.
@@ -87,9 +95,6 @@ func (t *Profile) RunProfile() error {
 
 		// the specified task.
 		t.pid,
-		// this is invalid. See man(2) perf_event_open.
-		// For some reason it worked in bcc through the BPF Module API.
-		// -1,
 
 		// on any CPU.
 		-1,
@@ -99,27 +104,33 @@ func (t *Profile) RunProfile() error {
 		// to be a group with only 1 member.
 		-1,
 
-		// The program file descriptor.
-		prog.FileDescriptor(),
+		// The flags.
+		0,
 	)
 	if err != nil {
 		return errors.Wrap(err, "error creating the perf event")
 	}
 	defer func() {
 		if err := unix.Close(evt); err != nil {
-			log.Fatalf("Failed to close perf event: %v", err)
+			t.logger.Fatal().Err(err).Msg("failed to close perf event")
 		}
 	}()
 
+	t.logger.Debug().Msg("attaching the ebpf program to the sampling perf event")
+
 	// Attach the BPF program to the sampling perf event.
-	if _, err = prog.AttachPerfEvent(prog.FileDescriptor()); err != nil {
+	if _, err = prog.AttachPerfEvent(evt); err != nil {
 		return errors.Wrap(err, "error attaching the BPF probe to the sampling perf event")
 	}
+
+	t.logger.Debug().Msg("getting the stack traces ebpf map")
 
 	stackTraces, err := bpfModule.GetMap(t.mapStackTraces)
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapStackTraces))
 	}
+
+	t.logger.Debug().Msg("getting the stack trace counts (histogram) ebpf maps")
 
 	histogram, err := bpfModule.GetMap(t.mapHistogram)
 	if err != nil {
@@ -129,8 +140,17 @@ func (t *Profile) RunProfile() error {
 	// Iterate over the stack profile counts histogram map.
 	result := make(map[string]int, 0)
 
+	t.logger.Debug().Msgf("collecting data for the specified duration (%d seconds)", t.duration)
+
+	time.Sleep(time.Second * time.Duration(t.duration))
+
+	t.logger.Debug().Msg("iterating over the retrieved histogram items")
+
 	for it := histogram.Iterator(); it.Next(); {
 		k := it.Key()
+
+		t.logger.Debug().Msgf("element key=%v", k)
+
 		count, err := histogram.GetValue(unsafe.Pointer(&k))
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
