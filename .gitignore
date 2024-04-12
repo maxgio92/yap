@@ -1,4 +1,5 @@
 .idea
-/perf-profiler-go
+/output
+/libbpfgo
 *.o
 vmlinux.h

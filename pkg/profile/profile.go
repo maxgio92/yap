@@ -7,7 +7,7 @@ import (
 	"log"
 	"unsafe"
 
-	bpf "github.com/aquasecurity/tracee/libbpfgo"
+	bpf "github.com/aquasecurity/libbpfgo"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
@@ -36,50 +36,6 @@ type Profile struct {
 	mapHistogram         string
 }
 
-type ProfileOption func(profile *Profile)
-
-func WithPID(pid int) ProfileOption {
-	return func(t *Profile) {
-		t.pid = pid
-	}
-}
-
-func WithDuration(duration int) ProfileOption {
-	return func(t *Profile) {
-		t.duration = duration
-	}
-}
-
-func WithSamplingPeriodMillis(period uint64) ProfileOption {
-	return func(t *Profile) {
-		t.samplingPeriodMillis = period
-	}
-}
-
-func WithProbeFilepath(path string) ProfileOption {
-	return func(t *Profile) {
-		t.probeFilepath = path
-	}
-}
-
-func WithProbeName(name string) ProfileOption {
-	return func(t *Profile) {
-		t.probeName = name
-	}
-}
-
-func WithMapStackTraces(name string) ProfileOption {
-	return func(t *Profile) {
-		t.mapStackTraces = name
-	}
-}
-
-func WithMapHistogram(name string) ProfileOption {
-	return func(t *Profile) {
-		t.mapHistogram = name
-	}
-}
-
 func NewProfile(opts ...ProfileOption) *Profile {
 	profile := new(Profile)
 	for _, f := range opts {
@@ -89,16 +45,7 @@ func NewProfile(opts ...ProfileOption) *Profile {
 	return profile
 }
 
-func (t *Profile) validate() error {
-	// TODO
-	return nil
-}
-
 func (t *Profile) RunProfile() error {
-	if err := t.validate(); err != nil {
-		return errors.Wrap(err, "error running profile")
-	}
-
 	bpfModule, err := bpf.NewModuleFromFile(t.probeFilepath)
 	if err != nil {
 		return errors.Wrap(err, "error creating the BPF module object")
@@ -153,7 +100,7 @@ func (t *Profile) RunProfile() error {
 		-1,
 
 		// The program file descriptor.
-		prog.GetFd(),
+		prog.FileDescriptor(),
 	)
 	if err != nil {
 		return errors.Wrap(err, "error creating the perf event")
@@ -165,7 +112,7 @@ func (t *Profile) RunProfile() error {
 	}()
 
 	// Attach the BPF program to the sampling perf event.
-	if _, err = prog.AttachPerfEvent(prog.GetFd()); err != nil {
+	if _, err = prog.AttachPerfEvent(prog.FileDescriptor()); err != nil {
 		return errors.Wrap(err, "error attaching the BPF probe to the sampling perf event")
 	}
 
@@ -182,9 +129,9 @@ func (t *Profile) RunProfile() error {
 	// Iterate over the stack profile counts histogram map.
 	result := make(map[string]int, 0)
 
-	for it := histogram.Iterator(int(unsafe.Sizeof(&HistogramKey{}))); it.Next(); {
+	for it := histogram.Iterator(); it.Next(); {
 		k := it.Key()
-		count, err := histogram.GetValue(k, len(k))
+		count, err := histogram.GetValue(unsafe.Pointer(&k))
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
 		}
@@ -198,6 +145,9 @@ func (t *Profile) RunProfile() error {
 		if int(key.Pid) != t.pid {
 			continue
 		}
+
+		fmt.Printf("%v\t%v\t\t", key.Pid, binary.LittleEndian.Uint64(count))
+		fmt.Printf("%v\t\t", key.KernelStackId)
 
 		var symbols string
 
@@ -230,7 +180,7 @@ func getStackTrace(stackTracesMap *bpf.BPFMap, id uint32) (*StackTrace, error) {
 	key := make([]byte, 4)
 	binary.LittleEndian.PutUint32(key, id)
 
-	stackBinary, err := stackTracesMap.GetValue(key, int(unsafe.Sizeof(&StackTrace{})))
+	stackBinary, err := stackTracesMap.GetValue(unsafe.Pointer(&key))
 	if err != nil {
 		return nil, err
 	}
