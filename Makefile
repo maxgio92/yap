@@ -38,7 +38,7 @@ $(PROGRAM): $(LIBBPFGO) | $(PROGRAM)/bpf
 		CGO_LDFLAGS=$(CGO_LDFLAGS) \
 			GOARCH=$(GOARCH) \
 			go build -v \
-				-o ${OUTPUT}/${PROGRAM} .
+				-o ${PROGRAM} .
 
 .PHONY: $(PROGRAM)/bpf
 $(PROGRAM)/bpf: vmlinux.h

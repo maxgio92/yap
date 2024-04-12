@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"os"
@@ -8,6 +9,9 @@ import (
 
 	"github.com/maxgio92/perf-profiler-go/pkg/profile"
 )
+
+//go:embed output/*
+var eBPFObject embed.FS
 
 func main() {
 	var pid, duration int
@@ -37,7 +41,7 @@ func main() {
 		profile.WithDuration(duration),
 		profile.WithSamplingPeriodMillis(11),
 		profile.WithProbeName("sample_stack_trace"),
-		profile.WithProbeFilepath("profile.o"),
+		profile.WithProbeFilepath("output/profile.o"),
 		profile.WithMapStackTraces("stack_traces"),
 		profile.WithMapHistogram("histogram"),
 	)
