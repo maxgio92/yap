@@ -42,7 +42,7 @@ $(PROGRAM): $(LIBBPFGO) | $(PROGRAM)/bpf
 
 .PHONY: $(PROGRAM)/bpf
 $(PROGRAM)/bpf: vmlinux.h
-	clang $(CFLAGS) -g -O2 -c -target bpf -o $(OUTPUT)/profile.o kernel/profile.c
+	clang $(CFLAGS) -g -O2 -c -target bpf -o $(OUTPUT)/profile.bpf.o kernel/profile.bpf.c
 
 .PHONY: $(LIBBPFGO)
 $(LIBBPFGO):
