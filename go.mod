@@ -1,4 +1,4 @@
-module github.com/maxgio92/perf-profiler-go
+module github.com/maxgio92/cpu-profiler
 
 go 1.21.1
 

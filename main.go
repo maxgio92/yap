@@ -7,7 +7,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/maxgio92/perf-profiler-go/pkg/profile"
+	"github.com/maxgio92/cpu-profiler/pkg/profile"
 )
 
 //go:embed output/*
