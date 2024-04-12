@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path"
+	"syscall"
 
 	"github.com/maxgio92/cpu-profiler/pkg/profile"
 	log "github.com/rs/zerolog"
@@ -15,9 +18,8 @@ import (
 var probeFS embed.FS
 
 func main() {
-	var pid, duration int
+	var pid int
 	flag.IntVar(&pid, "pid", 0, "The PID of the process")
-	flag.IntVar(&duration, "duration", 30, "The duration in seconds for the profiling")
 
 	flag.Usage = func() {
 		fmt.Printf("Usage: %s [options] [command]\n", path.Base(os.Args[0]))
@@ -32,11 +34,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if duration <= 0 {
-		fmt.Println("duration must be greater than 0")
-		os.Exit(1)
-	}
-
 	probe, err := probeFS.ReadFile("output/profile.bpf.o")
 	if err != nil {
 		fmt.Println(err)
@@ -47,7 +44,6 @@ func main() {
 
 	profiler := profile.NewProfile(
 		profile.WithPID(pid),
-		profile.WithDuration(duration),
 		profile.WithSamplingPeriodMillis(11),
 		profile.WithProbeName("sample_stack_trace"),
 		profile.WithProbe(probe),
@@ -56,8 +52,16 @@ func main() {
 		profile.WithLogger(logger),
 	)
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+
+	go func() {
+		<-ctx.Done()
+		logger.Info().Msg("terminating...")
+		cancel()
+	}()
+
 	// Run profile.
-	if err := profiler.RunProfile(); err != nil {
+	if err := profiler.RunProfile(ctx); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}

@@ -2,9 +2,10 @@ package profile
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
-	"time"
+	"runtime"
 	"unsafe"
 
 	bpf "github.com/aquasecurity/libbpfgo"
@@ -29,7 +30,6 @@ type StackTrace [127]uint64
 
 type Profile struct {
 	pid                  int
-	duration             int
 	samplingPeriodMillis uint64
 	probe                []byte
 	probeName            string
@@ -47,7 +47,7 @@ func NewProfile(opts ...ProfileOption) *Profile {
 	return profile
 }
 
-func (t *Profile) RunProfile() error {
+func (t *Profile) RunProfile(ctx context.Context) error {
 	bpfModule, err := bpf.NewModuleFromBuffer(t.probe, t.probeName)
 	if err != nil {
 		return errors.Wrap(err, "error creating the BPF module object")
@@ -67,61 +67,73 @@ func (t *Profile) RunProfile() error {
 		return errors.Wrap(err, "error getting the BPF program object")
 	}
 
-	// The perf event attribute set.
-	attr := &unix.PerfEventAttr{
+	cpusonline := runtime.NumCPU()
 
-		// If type is PERF_TYPE_SOFTWARE, we are measuring software events provided by the kernel.
-		Type: unix.PERF_TYPE_SOFTWARE,
+	for i := 0; i < cpusonline; i++ {
 
-		// This reports the CPU clock, a high-resolution per-CPU timer.
-		Config: unix.PERF_COUNT_SW_CPU_CLOCK,
+		// The perf event attribute set.
+		attr := &unix.PerfEventAttr{
 
-		// A "sampling" event is one that generates an overflow notification every N events,
-		// where N is given by sample_period.
-		// sample_freq can be used if you wish to use frequency rather than period.
-		// sample_period and sample_freq are mutually exclusive.
-		// The kernel will adjust the sampling period to try and achieve the desired rate.
-		Sample: t.samplingPeriodMillis * 1000 * 1000,
-	}
+			// If type is PERF_TYPE_SOFTWARE, we are measuring software events provided by the kernel.
+			Type: unix.PERF_TYPE_SOFTWARE,
 
-	t.logger.Debug().Msg("opening the sampling software cpu block perf event")
+			// This reports the CPU clock, a high-resolution per-CPU timer.
+			Config: unix.PERF_COUNT_SW_CPU_CLOCK,
 
-	// Create the perf event file descriptor that corresponds to one event that is measured.
-	// We're measuring a clock timer software event just to run the program on a periodic schedule.
-	// When a specified number of clock samples occur, the kernel will trigger the program.
-	evt, err := unix.PerfEventOpen(
-		// The attribute set.
-		attr,
-
-		// the specified task.
-		t.pid,
-
-		// on any CPU.
-		-1,
-
-		// The group_fd argument allows event groups to be created. An event group has one event which
-		// is the group leader. A single event on its own is created with group_fd = -1 and is considered
-		// to be a group with only 1 member.
-		-1,
-
-		// The flags.
-		0,
-	)
-	if err != nil {
-		return errors.Wrap(err, "error creating the perf event")
-	}
-	defer func() {
-		if err := unix.Close(evt); err != nil {
-			t.logger.Fatal().Err(err).Msg("failed to close perf event")
+			// A "sampling" event is one that generates an overflow notification every N events,
+			// where N is given by sample_period.
+			// sample_freq can be used if you wish to use frequency rather than period.
+			// sample_period and sample_freq are mutually exclusive.
+			// The kernel will adjust the sampling period to try and achieve the desired rate.
+			Sample: t.samplingPeriodMillis * 1000 * 1000,
 		}
-	}()
 
-	t.logger.Debug().Msg("attaching the ebpf program to the sampling perf event")
+		t.logger.Debug().Msg("opening the sampling software cpu block perf event")
 
-	// Attach the BPF program to the sampling perf event.
-	if _, err = prog.AttachPerfEvent(evt); err != nil {
-		return errors.Wrap(err, "error attaching the BPF probe to the sampling perf event")
+		// Create the perf event file descriptor that corresponds to one event that is measured.
+		// We're measuring a clock timer software event just to run the program on a periodic schedule.
+		// When a specified number of clock samples occur, the kernel will trigger the program.
+		evt, err := unix.PerfEventOpen(
+			// The attribute set.
+			attr,
+
+			// the specified task.
+			//t.pid,
+			-1,
+
+			// on the Nth CPU.
+			i,
+
+			// The group_fd argument allows event groups to be created. An event group has one event which
+			// is the group leader. A single event on its own is created with group_fd = -1 and is considered
+			// to be a group with only 1 member.
+			-1,
+
+			// The flags.
+			0,
+		)
+		if err != nil {
+			return errors.Wrap(err, "error creating the perf event")
+		}
+		defer func() {
+			if err := unix.Close(evt); err != nil {
+				t.logger.Fatal().Err(err).Msg("failed to close perf event")
+			}
+		}()
+
+		t.logger.Debug().Msgf("attaching the ebpf program to the sampling perf event for cpu #%d", i)
+
+		// Attach the BPF program to the sampling perf event.
+		if _, err = prog.AttachPerfEvent(evt); err != nil {
+			return errors.Wrap(err, "error attaching the BPF probe to the sampling perf event")
+		}
 	}
+
+	t.logger.Info().Msg("collecting data")
+
+	<-ctx.Done()
+
+	t.logger.Info().Msg("received signal, analysing data")
 
 	t.logger.Debug().Msg("getting the stack traces ebpf map")
 
@@ -139,10 +151,6 @@ func (t *Profile) RunProfile() error {
 
 	// Iterate over the stack profile counts histogram map.
 	result := make(map[string]int, 0)
-
-	t.logger.Debug().Msgf("collecting data for the specified duration (%d seconds)", t.duration)
-
-	time.Sleep(time.Second * time.Duration(t.duration))
 
 	t.logger.Debug().Msg("iterating over the retrieved histogram items")
 

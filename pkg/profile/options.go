@@ -12,12 +12,6 @@ func WithPID(pid int) ProfileOption {
 	}
 }
 
-func WithDuration(duration int) ProfileOption {
-	return func(t *Profile) {
-		t.duration = duration
-	}
-}
-
 func WithSamplingPeriodMillis(period uint64) ProfileOption {
 	return func(t *Profile) {
 		t.samplingPeriodMillis = period
