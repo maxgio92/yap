@@ -134,7 +134,6 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 	<-ctx.Done()
 
 	t.logger.Info().Msg("received signal, analysing data")
-
 	t.logger.Debug().Msg("getting the stack traces ebpf map")
 
 	stackTraces, err := bpfModule.GetMap(t.mapStackTraces)
@@ -157,9 +156,7 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 	for it := histogram.Iterator(); it.Next(); {
 		k := it.Key()
 
-		t.logger.Debug().Msgf("element key=%v", k)
-
-		count, err := histogram.GetValue(unsafe.Pointer(&k))
+		count, err := histogram.GetValue(unsafe.Pointer(&k[0]))
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
 		}
@@ -174,26 +171,29 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 			continue
 		}
 
-		fmt.Printf("%v\t%v\t\t", key.Pid, binary.LittleEndian.Uint64(count))
-		fmt.Printf("%v\t\t", key.KernelStackId)
+		t.logger.Debug().Int32("pid", key.Pid).Uint64("stack trace count", binary.LittleEndian.Uint64(count)).Msg("got stack traces")
 
 		var symbols string
 
 		if key.KernelStackId != 0 {
-			st, err := getStackTrace(stackTraces, key.KernelStackId)
+			id := key.KernelStackId
+			st, err := getStackTrace(stackTraces, id)
 			if err == nil && st != nil {
+				t.logger.Debug().Uint32("kernel stack id", key.KernelStackId).Msg("got stack trace for the kernel stack id")
 				symbols += getSymbols(bpfModule, t.pid, st, false)
 			} else {
-				fmt.Printf("error getting user stack trace for id %d", key.KernelStackId)
+				t.logger.Warn().Err(err).Uint32("kernel stack id", key.KernelStackId).Msg("error getting stack trace for the kernel stack id")
 			}
 		}
 
 		if key.UserStackId != 0 {
-			st, err := getStackTrace(stackTraces, key.UserStackId)
+			id := key.UserStackId
+			st, err := getStackTrace(stackTraces, id)
 			if err == nil && st != nil {
+				t.logger.Debug().Uint32("user stack id", key.UserStackId).Msg("got stack trace for the user stack id")
 				symbols += getSymbols(bpfModule, t.pid, st, true)
 			} else {
-				fmt.Printf("error getting user stack trace for id %d", key.UserStackId)
+				t.logger.Warn().Err(err).Uint32("user stack id", key.UserStackId).Msg("error getting stack trace for the user stack id")
 			}
 		}
 
@@ -208,7 +208,7 @@ func getStackTrace(stackTracesMap *bpf.BPFMap, id uint32) (*StackTrace, error) {
 	key := make([]byte, 4)
 	binary.LittleEndian.PutUint32(key, id)
 
-	stackBinary, err := stackTracesMap.GetValue(unsafe.Pointer(&key))
+	stackBinary, err := stackTracesMap.GetValue(unsafe.Pointer(&key[0]))
 	if err != nil {
 		return nil, err
 	}
