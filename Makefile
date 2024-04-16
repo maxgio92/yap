@@ -41,7 +41,7 @@ $(PROGRAM): $(LIBBPFGO) | $(PROGRAM)/bpf
 				-o ${PROGRAM} .
 
 .PHONY: $(PROGRAM)/bpf
-$(PROGRAM)/bpf: vmlinux.h
+$(PROGRAM)/bpf: $(VMLINUXH)
 	clang $(CFLAGS) -g -O2 -c -target bpf -o $(OUTPUT)/profile.bpf.o kernel/profile.bpf.c
 
 .PHONY: $(LIBBPFGO)
@@ -59,7 +59,7 @@ endif
 		echo "ERROR: kernel does not seem to support BTF"; \
 		exit 1; \
 	fi
-	@if [ ! -f $(VMLINUXH) ]; then \
+	@if [ ! -f kernel/$(VMLINUXH) ]; then \
 		echo "INFO: generating $(VMLINUXH) from $(BTFFILE)"; \
 		$(bpftool) btf dump file $(BTFFILE) format c > kernel/$(VMLINUXH); \
 	fi
