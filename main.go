@@ -20,6 +20,7 @@ var probeFS embed.FS
 func main() {
 	var pid int
 	flag.IntVar(&pid, "pid", 0, "The PID of the process")
+	debug := flag.Bool("debug", false, "Sets log level to debug")
 
 	flag.Usage = func() {
 		fmt.Printf("Usage: %s [options] [command]\n", path.Base(os.Args[0]))
@@ -40,7 +41,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := log.New(os.Stdout).Level(log.DebugLevel)
+	logger := log.New(os.Stdout).Level(log.InfoLevel)
+	if *debug {
+		logger = logger.Level(log.DebugLevel)
+	}
 
 	profiler := profile.NewProfile(
 		profile.WithPID(pid),
