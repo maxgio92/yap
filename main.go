@@ -65,8 +65,15 @@ func main() {
 	}()
 
 	// Run profile.
-	if err := profiler.RunProfile(ctx); err != nil {
+	report, err := profiler.RunProfile(ctx)
+	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
+	}
+
+	// Print stack traces residency fraction table.
+	fmt.Println("Residency\tStack trace")
+	for k, v := range report {
+		fmt.Printf("%.1f%%\t\t%s\n", v*100, k)
 	}
 }
