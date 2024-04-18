@@ -153,13 +153,16 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 
 	t.logger.Debug().Msg("iterating over the retrieved histogram items")
 
+	total := 0
 	for it := histogram.Iterator(); it.Next(); {
 		k := it.Key()
 
-		count, err := histogram.GetValue(unsafe.Pointer(&k[0]))
+		// Get count for the specific sampled stack trace.
+		countB, err := histogram.GetValue(unsafe.Pointer(&k[0]))
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
 		}
+		count := int(binary.LittleEndian.Uint64(countB))
 
 		var key HistogramKey
 		if err = binary.Read(bytes.NewBuffer(k), binary.LittleEndian, &key); err != nil {
@@ -171,11 +174,11 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 			continue
 		}
 
-		t.logger.Debug().Int32("pid", key.Pid).Uint64("stack trace count", binary.LittleEndian.Uint64(count)).Msg("got kstack traces")
+		t.logger.Debug().Int32("pid", key.Pid).Int("stack trace count", count).Msg("got stack traces")
 
 		var symbols string
 
-		if key.UserStackId >= 0 {
+		if int32(key.UserStackId) >= 0 {
 			st, err := t.getStackTrace(stackTraces, key.UserStackId)
 			if err != nil {
 				t.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
@@ -184,7 +187,7 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 			symbols += getSymbols(t.pid, st, true)
 		}
 
-		if key.KernelStackId >= 0 {
+		if int32(key.KernelStackId) >= 0 {
 			st, err := t.getStackTrace(stackTraces, key.KernelStackId)
 			if err != nil {
 				t.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
@@ -194,16 +197,20 @@ func (t *Profile) RunProfile(ctx context.Context) error {
 		}
 
 		// Increment the result map value for the stack trace symbol string (e.g. "main;subfunc;")
-		result[symbols]++
+		total += count
+		result[symbols] += count
+	}
+
+	for k, v := range result {
+		residencyFraction := float32(v) / float32(total) * 100
+		fmt.Printf("%s=%.2f%%\n", k, residencyFraction)
 	}
 
 	return nil
 }
 
-func (t *Profile) getStackTrace(stackTracesMap *bpf.BPFMap, id uint32) (*StackTrace, error) {
-	t.logger.Debug().Msgf("try lookup on map %s for key pointer %v", stackTracesMap.Name(), &id)
-
-	stackBinary, err := stackTracesMap.GetValue(unsafe.Pointer(&id))
+func (t *Profile) getStackTrace(stackTraces *bpf.BPFMap, id uint32) (*StackTrace, error) {
+	stackBinary, err := stackTraces.GetValue(unsafe.Pointer(&id))
 	if err != nil {
 		return nil, err
 	}
@@ -222,11 +229,12 @@ func getSymbols(pid int, stackTrace *StackTrace, user bool) string {
 	if !user {
 		pid = -1
 	}
+
+	// TODO: implement symbolization.
+
 	for _, ip := range stackTrace {
 		if ip != 0 {
-			sym := fmt.Sprintf("%#016x %s; ", ip, "[UNKOWN]")
-			symbols += sym
-			symbols += ";"
+			symbols += fmt.Sprintf("%#016x;", ip)
 		}
 	}
 
