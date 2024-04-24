@@ -18,6 +18,11 @@ struct stack_trace_key_t {
 	u32 user_stack_id;
 };
 
+struct histogram_value_t {
+	u64 count;
+	u_char *exe_path;
+};
+
 struct buffer {
 	u8 data[MAX_PERCPU_ARRAY_SIZE];
 };

@@ -15,7 +15,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, struct stack_trace_key_t);
-	__type(value, u64);
+	__type(value, struct histogram_value_t);
 	__uint(max_entries, K_NUM_MAP_ENTRIES);
 } histogram SEC(".maps");
 
@@ -144,11 +144,11 @@ static __always_inline u_char* get_task_exe_pathname(struct task_struct *task)
 SEC("perf_event")
 int sample_stack_trace(struct bpf_perf_event_data* ctx)
 {
-	char stack_fmt[] = "user_stack_id=%d kern_stack_id=%d\n";
 	char exe_path_dbg_fmt[] = "pid=%d comm=%s exe_path=%s\n";
 	struct stack_trace_key_t key;
+	struct histogram_value_t *value;
 	struct bpf_perf_event_value value_buf;
-	u64 *count, one = 1;
+	u64 one = 1;
 	char comm[TASK_COMM_LEN];
 	int ret;
 
@@ -174,11 +174,14 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 		bpf_trace_printk(exe_path_dbg_fmt, sizeof(exe_path_dbg_fmt), key.pid, comm, exe_path);
 	}
 
-	count = bpf_map_lookup_elem(&histogram, &key);
-	if(count) {
-		(*count)++;
+	value = (struct histogram_value_t*)bpf_map_lookup_elem(&histogram, &key);
+	if (value) {
+		(*value).count++;
+		(*value).exe_path = exe_path;
 	} else {
-		bpf_map_update_elem(&histogram, &key, &one, BPF_NOEXIST);
+		struct histogram_value_t value = { .count = one, .exe_path = exe_path};
+		bpf_map_update_elem(&histogram, &key, &value, BPF_NOEXIST);
+		bpf_trace_printk(exe_path_dbg_fmt, sizeof(exe_path_dbg_fmt), key.pid, comm, exe_path);
 	}
 
 	return 0;
