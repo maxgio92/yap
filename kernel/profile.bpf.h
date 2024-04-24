@@ -20,7 +20,7 @@ struct stack_trace_key_t {
 
 struct histogram_value_t {
 	u64 count;
-	u_char *exe_path;
+	char *exe_path;
 };
 
 struct buffer {

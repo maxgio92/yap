@@ -30,7 +30,7 @@ struct {
  * get_pathname_from_path lookups pathname from path struct
  * Thanks to tracee: https://github.com/aquasecurity/tracee/blob/a6118678c6908c74d6ee26ca9183e99932d098c9/pkg/ebpf/c/common/filesystem.h#L160
 */
-static __always_inline long get_pathname_from_path(u_char **path_str, struct path *path, struct buffer *out_buf)
+static __always_inline long get_pathname_from_path(struct path *path, struct buffer *out_buf)
 {
 	struct dentry *dentry, *dentry_parent, *dentry_mnt_root;
 	struct vfsmount *vfsmnt;
@@ -109,13 +109,16 @@ static __always_inline long get_pathname_from_path(u_char **path_str, struct pat
 		/* Add leading slash */
 		buf_off -= 1;
 		bpf_probe_read_kernel(&(out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off)]), 1, &slash);
+		/* Null terminate the path string */
+		bpf_probe_read_kernel(&(out_buf->data[HALF_PERCPU_ARRAY_SIZE - 1]), 1, &zero);
 	}
+	return buf_off;
+}
 
-	/* Null terminate the path string */
-	bpf_probe_read_kernel(&(out_buf->data[HALF_PERCPU_ARRAY_SIZE - 1]), 1, &zero);
-
-	*path_str = &out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off)];
-	return HALF_PERCPU_ARRAY_SIZE - buf_off - 1;
+/* get_buffer takes a buffer from per-CPU array map */
+static __always_inline struct buffer *get_buffer(int idx)
+{
+	return (struct buffer *)bpf_map_lookup_elem(&bufs_map, &idx);
 }
 
 /*
@@ -123,26 +126,18 @@ static __always_inline long get_pathname_from_path(u_char **path_str, struct pat
  * This does not apply to kernel threads as they share the same memory-mapped address space,
  * as opposed to user address space.
  */
-static __always_inline u_char* get_task_exe_pathname(struct task_struct *task)
+static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 {
-	u_char *file_path = NULL;
-	/* Get ref file from the task's user space memory mapping descriptor */
-	struct file *file = BPF_CORE_READ(task, mm, exe_file);
-	/*
-	 * Instruct compiler to generate CO-RE relocation records for any accesses
-	 * to aggregate data structures in file's path
-	 */
-	struct path *path = __builtin_preserve_access_index(&file->f_path); /* File's path */
+	/* Get ref file path from the task's user space memory mapping descriptor */
+	struct path path = BPF_CORE_READ(task, mm, exe_file, f_path);
 
-	/* Get buffer from per-CPU array map */
-	u32 zero = 0;
-	struct buffer *string_buf = (struct buffer *)bpf_map_lookup_elem(&bufs_map, &zero);
+	struct buffer *string_buf = get_buffer(0);
 	if (string_buf == NULL) {
 		return NULL;
 	}
 	/* Write path string from path struct to the buffer */
-	get_pathname_from_path(&file_path, path, string_buf);
-	return file_path;
+	size_t buf_off = get_pathname_from_path(&path, string_buf);
+	return &string_buf->data[buf_off];
 }
 
 SEC("perf_event")
@@ -157,7 +152,7 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 	int ret;
 
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task(); /* Current task struct */
-	u_char *exe_path = get_task_exe_pathname(task);
+	char *exe_path = get_task_exe_pathname(task);
 	if (exe_path == NULL) {
 		return 0;
 	}
@@ -172,11 +167,6 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 	}
 
 	bpf_get_current_comm(&comm, sizeof(comm));
-
-	/* Check binary file path excluding kernel threads */
-	if ((int)key.user_stack_id > 0 && strcmp((const char*)exe_path, "") == 0) {
-		bpf_trace_printk(exe_path_dbg_fmt, sizeof(exe_path_dbg_fmt), key.pid, comm, exe_path);
-	}
 
 	value = (struct histogram_value_t*)bpf_map_lookup_elem(&histogram, &key);
 	if (value) {
