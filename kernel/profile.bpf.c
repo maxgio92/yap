@@ -24,7 +24,7 @@ struct {
 	__type(key, u32);
 	__type(value, struct buffer);
 	__uint(max_entries, 1);
-} heaps_map SEC(".maps");
+} bufs_map SEC(".maps");
 
 /*
  * get_pathname_from_path lookups pathname from path struct
@@ -32,25 +32,29 @@ struct {
 */
 static __always_inline long get_pathname_from_path(u_char **path_str, struct path *path, struct buffer *out_buf)
 {
-	long ret;
 	struct dentry *dentry, *dentry_parent, *dentry_mnt_root;
 	struct vfsmount *vfsmnt;
 	struct mount *mnt, *mnt_parent;
-	const u_char *name;
-	size_t name_len;
+	const u_char *dentry_name;
+	size_t dentry_name_len;
+
+	char slash = '/';
+	int zero = 0;
 
 	dentry = BPF_CORE_READ(path, dentry); /* Directory entry of the specified path */
 	vfsmnt = BPF_CORE_READ(path, mnt); /* VFS mount of the specified path */
 	mnt = container_of(vfsmnt, struct mount, mnt); /* Mount struct of the VFS mount */
 	mnt_parent = BPF_CORE_READ(mnt, mnt_parent); /* Parent mount of the VFS mount, if not global root */
 
-	size_t buf_off = HALF_PERCPU_ARRAY_SIZE;
+	unsigned int buf_off = HALF_PERCPU_ARRAY_SIZE;
+	unsigned int dentry_name_off;
+
+	int sz;
 
 #pragma unroll
 	for (int i = 0; i < MAX_PATH_COMPONENTS; i++) {
-
-		dentry_mnt_root = BPF_CORE_READ(vfsmnt, mnt_root); /* Root of the mounted tree */
-		dentry_parent = BPF_CORE_READ(dentry, d_parent); /* Parent dentry */
+		dentry_mnt_root = BPF_CORE_READ(vfsmnt, mnt_root);
+		dentry_parent = BPF_CORE_READ(dentry, d_parent);
 
 		/* We reached root */
 		if (dentry == dentry_mnt_root || dentry == dentry_parent) {
@@ -61,8 +65,9 @@ static __always_inline long get_pathname_from_path(u_char **path_str, struct pat
 			if (mnt != mnt_parent) {
 				/* Not global root - continue with mount point path */
 				dentry = BPF_CORE_READ(mnt, mnt_mountpoint);
+				mnt = BPF_CORE_READ(mnt, mnt_parent);
 				mnt_parent = BPF_CORE_READ(mnt, mnt_parent);
-				vfsmnt = __builtin_preserve_access_index(&mnt->mnt);
+				bpf_core_read(&vfsmnt, sizeof(struct vfsmnt *), &mnt->mnt);
 				continue;
 			}
 			/* Global root - path fully parsed */
@@ -70,47 +75,46 @@ static __always_inline long get_pathname_from_path(u_char **path_str, struct pat
 		}
 
 		/* Add this dentry name to path */
-		name_len = LIMIT_PATH_SIZE(BPF_CORE_READ(dentry, d_name.len));
-		name = BPF_CORE_READ(dentry, d_name.name); /* directory name as quick string (qstr) */
-		name_len = name_len + 1; /* Add slash */
+		dentry_name = BPF_CORE_READ(dentry, d_name.name); /* directory name as quick string (qstr) */
+		dentry_name_len = LIMIT_PATH_SIZE(BPF_CORE_READ(dentry, d_name.len) + 1); /* Add slash (1) */
+		dentry_name_off = buf_off - dentry_name_len;
 		/* Is string buffer big enough for dentry name? */
-		if (name_len > buf_off) {
+		if (dentry_name_off > buf_off) { /* Wrap around */
 			break;
 		}
 		/* Copy the directory name to the output buffer */
-		volatile size_t new_buf_offset = buf_off - name_len; /* satisfy verifier */
-		ret = bpf_probe_read_kernel_str(
-			&(out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(new_buf_offset)]), /* satisfy verifier */
-			name_len, name);
-		if (ret < 0) {
-		      return ret;
-		}
-		if (ret > 1) {
+		sz = bpf_probe_read_kernel_str(
+			&(out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(dentry_name_off)]), dentry_name_len, dentry_name);
+		if (sz > 1) {
 			buf_off -= 1; /* Remove null byte termination with slash sign */
-			buf_off = LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off); /* satisfy verifier */
-			out_buf->data[buf_off] = '/';
-			buf_off -= ret - 1;
-			buf_off = LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off); /* satisfy verifier */
+			bpf_probe_read_kernel(&(out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off)]), 1,  &slash);
+			buf_off -= sz - 1;
 		} else {
-			/* If copied size is 0 or 1 we have an error (path can't be null nor an empty string) */
+			/*
+			 * If copied size is 0 or 1 we have an error (path can't be null nor an empty string)
+			 * The same, if the returned size is negative an error occurred
+			*/
 			break;
 		}
 
 		/* Go one level up */
 		dentry = dentry_parent;
 	}
-
-	/* Is string buffer big enough for slash? */
-	if (buf_off != 0) {
+	if (buf_off == HALF_PERCPU_ARRAY_SIZE) {
+		/* memfd files have no path in the filesystem -> extract their name */
+		buf_off = 0;
+		dentry_name = BPF_CORE_READ(dentry, d_name.name);
+		bpf_probe_read_kernel(&(out_buf->data[0]), MAX_PATH_SIZE, dentry_name);
+	} else {
 		/* Add leading slash */
 		buf_off -= 1;
-		buf_off = LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off); /* satisfy verifier */
-		out_buf->data[buf_off] = '/';
+		bpf_probe_read_kernel(&(out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off)]), 1, &slash);
 	}
 
 	/* Null terminate the path string */
-	out_buf->data[HALF_PERCPU_ARRAY_SIZE - 1] = 0;
-	*path_str = &out_buf->data[buf_off];
+	bpf_probe_read_kernel(&(out_buf->data[HALF_PERCPU_ARRAY_SIZE - 1]), 1, &zero);
+
+	*path_str = &out_buf->data[LIMIT_HALF_PERCPU_ARRAY_SIZE(buf_off)];
 	return HALF_PERCPU_ARRAY_SIZE - buf_off - 1;
 }
 
@@ -132,7 +136,7 @@ static __always_inline u_char* get_task_exe_pathname(struct task_struct *task)
 
 	/* Get buffer from per-CPU array map */
 	u32 zero = 0;
-	struct buffer *string_buf = (struct buffer *)bpf_map_lookup_elem(&heaps_map, &zero);
+	struct buffer *string_buf = (struct buffer *)bpf_map_lookup_elem(&bufs_map, &zero);
 	if (string_buf == NULL) {
 		return NULL;
 	}
