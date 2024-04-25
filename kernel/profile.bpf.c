@@ -14,17 +14,24 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, histogram_key_t);
-	__type(value, histogram_value_t);
+	__type(key, histogram_key_t);		/* per-process stack trace key */
+	__type(value, u64);			/* sample count */
 	__uint(max_entries, K_NUM_MAP_ENTRIES);
 } histogram SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, u32);			/* pid */
+	__type(value, char[MAX_ARRAY_SIZE]);	/* exe_path */
+	__uint(max_entries, K_NUM_MAP_ENTRIES);
+} binprm_info SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, u32);
 	__type(value, buffer_t);
 	__uint(max_entries, 1);
-} bufs_percpu SEC(".maps");
+} heaps SEC(".maps");
 
 /*
  * get_pathname_from_path lookups pathname from path struct
@@ -118,7 +125,7 @@ static __always_inline long get_pathname_from_path(struct path *path, buffer_t *
 /* get_buffer takes a buffer from per-CPU array map */
 static __always_inline buffer_t *get_buffer(int idx)
 {
-	return (buffer_t *)bpf_map_lookup_elem(&bufs_percpu, &idx);
+	return (buffer_t *)bpf_map_lookup_elem(&heaps, &idx);
 }
 
 /*
@@ -128,7 +135,11 @@ static __always_inline buffer_t *get_buffer(int idx)
  */
 static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 {
-	/* Get ref file path from the task's user space memory mapping descriptor */
+	/*
+	 * Get ref file path from the task's user space memory mapping descriptor.
+	 * exe_file->f_path could also be accessed from current task's binprm struct 
+	 * (ctx->args[2]->file->f_path)
+	 */
 	struct path path = BPF_CORE_READ(task, mm, exe_file, f_path);
 
 	buffer_t *string_buf = get_buffer(0);
@@ -143,39 +154,48 @@ static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 SEC("perf_event")
 int sample_stack_trace(struct bpf_perf_event_data* ctx)
 {
-	char exe_path_dbg_fmt[] = "pid=%d comm=%s exe_path=%s\n";
+	char hist_insert_fmt[] = "stack trace histogram insert pid=%d comm=%s exe_path=%s\n";
 	histogram_key_t key;
 	histogram_value_t *value;
 	struct bpf_perf_event_value value_buf;
-	u64 one = 1;
+	u64 *count, one = 1;
 	char comm[TASK_COMM_LEN];
-	int ret;
 
-	struct task_struct *task = (struct task_struct *)bpf_get_current_task(); /* Current task struct */
-	char *exe_path = get_task_exe_pathname(task);
+	struct task_struct *task; 
+	char *exe_path;
+	char exe_path_str[MAX_ARRAY_SIZE];
+	int len = 0;
+
+	/* Get current task executable pathname */
+	task = (struct task_struct *)bpf_get_current_task(); /* Current task struct */
+	exe_path = get_task_exe_pathname(task);
 	if (exe_path == NULL) {
 		return 0;
 	}
-
-	key.pid = bpf_get_current_pid_tgid() >> 32;
+	len = bpf_core_read_str(&exe_path_str, sizeof(exe_path_str), exe_path);
+	if (len < 0) {
+		return 0;
+	}
 
 	/* Sample the user and kernel stack traces, and record in the stack_traces structure. */
+	key.pid = bpf_get_current_pid_tgid() >> 32;
 	key.kernel_stack_id = bpf_get_stackid(ctx, &stack_traces, 0 | BPF_F_FAST_STACK_CMP);
 	key.user_stack_id = bpf_get_stackid(ctx, &stack_traces, 0 | BPF_F_FAST_STACK_CMP | BPF_F_USER_STACK);
 	if ((int)key.kernel_stack_id < 0 && (int)key.user_stack_id < 0) {
 		return 0;
 	}
 
+	/* Get current task command */
 	bpf_get_current_comm(&comm, sizeof(comm));
 
-	value = (histogram_value_t*)bpf_map_lookup_elem(&histogram, &key);
-	if (value) {
-		(*value).count++;
-		(*value).exe_path = exe_path;
+	/* Upsert stack trace histogram */
+	count = (u64*)bpf_map_lookup_elem(&histogram, &key);
+	if (count) {
+		(*count)++;
 	} else {
-		histogram_value_t value = { .count = one, .exe_path = exe_path};
-		bpf_map_update_elem(&histogram, &key, &value, BPF_NOEXIST);
-		bpf_trace_printk(exe_path_dbg_fmt, sizeof(exe_path_dbg_fmt), key.pid, comm, exe_path);
+		bpf_map_update_elem(&histogram, &key, &one, BPF_NOEXIST);
+		bpf_map_update_elem(&binprm_info, &key.pid, &exe_path_str, BPF_ANY);
+		bpf_trace_printk(hist_insert_fmt, sizeof(hist_insert_fmt), key.pid, comm, exe_path_str);
 	}
 
 	return 0;
