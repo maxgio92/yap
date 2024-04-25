@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"C"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -154,6 +155,11 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapHistogram))
 	}
 
+	binprmInfo, err := bpfModule.GetMap("binprm_info")
+	if err != nil {
+		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", "binprm_info"))
+	}
+
 	// Iterate over the stack profile counts histogram map.
 	countTable := make(map[string]int, 0)
 
@@ -164,15 +170,20 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		k := it.Key()
 
 		// Get count for the specific sampled stack trace.
-		countB, err := histogram.GetValue(unsafe.Pointer(&k[0]))
+		v, err := histogram.GetValue(unsafe.Pointer(&k[0]))
 		if err != nil {
 			return nil, errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
 		}
-		count := int(binary.LittleEndian.Uint64(countB))
+		count := int(binary.LittleEndian.Uint64(v))
 
 		var key HistogramKey
 		if err = binary.Read(bytes.NewBuffer(k), binary.LittleEndian, &key); err != nil {
 			return nil, errors.Wrap(err, fmt.Sprintf("error reading the stack profile count key %v", k))
+		}
+
+		exePath, err := t.getExePath(binprmInfo, key.Pid)
+		if err != nil {
+			return nil, errors.Wrap(err, "error getting exe path item")
 		}
 
 		// Skip stack profile counts of other tasks.
@@ -180,7 +191,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 			continue
 		}
 
-		t.logger.Debug().Int32("pid", key.Pid).Int("stack trace count", count).Msg("got stack traces")
+		t.logger.Debug().Int32("pid", key.Pid).Str("exe_path", *exePath).Int("stack trace count", count).Msg("got stack traces")
 
 		var symbols string
 
@@ -214,6 +225,17 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 	}
 
 	return fractionTable, nil
+}
+
+func (t Profile) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, error) {
+	v, err := binprmInfoMap.GetValue(unsafe.Pointer(&pid))
+	if err != nil {
+		return nil, err
+	}
+	v = v[:clen(v)]
+	vs := string(v)
+
+	return &vs, nil
 }
 
 func (t *Profile) getStackTrace(stackTraces *bpf.BPFMap, id uint32) (*StackTrace, error) {
