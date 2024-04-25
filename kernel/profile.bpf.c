@@ -14,23 +14,23 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, struct stack_trace_key_t);
-	__type(value, struct histogram_value_t);
+	__type(key, histogram_key_t);
+	__type(value, histogram_value_t);
 	__uint(max_entries, K_NUM_MAP_ENTRIES);
 } histogram SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, u32);
-	__type(value, struct buffer);
+	__type(value, buffer_t);
 	__uint(max_entries, 1);
-} bufs_map SEC(".maps");
+} bufs_percpu SEC(".maps");
 
 /*
  * get_pathname_from_path lookups pathname from path struct
  * Thanks to tracee: https://github.com/aquasecurity/tracee/blob/a6118678c6908c74d6ee26ca9183e99932d098c9/pkg/ebpf/c/common/filesystem.h#L160
 */
-static __always_inline long get_pathname_from_path(struct path *path, struct buffer *out_buf)
+static __always_inline long get_pathname_from_path(struct path *path, buffer_t *out_buf)
 {
 	struct dentry *dentry, *dentry_parent, *dentry_mnt_root;
 	struct vfsmount *vfsmnt;
@@ -116,9 +116,9 @@ static __always_inline long get_pathname_from_path(struct path *path, struct buf
 }
 
 /* get_buffer takes a buffer from per-CPU array map */
-static __always_inline struct buffer *get_buffer(int idx)
+static __always_inline buffer_t *get_buffer(int idx)
 {
-	return (struct buffer *)bpf_map_lookup_elem(&bufs_map, &idx);
+	return (buffer_t *)bpf_map_lookup_elem(&bufs_percpu, &idx);
 }
 
 /*
@@ -131,7 +131,7 @@ static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 	/* Get ref file path from the task's user space memory mapping descriptor */
 	struct path path = BPF_CORE_READ(task, mm, exe_file, f_path);
 
-	struct buffer *string_buf = get_buffer(0);
+	buffer_t *string_buf = get_buffer(0);
 	if (string_buf == NULL) {
 		return NULL;
 	}
@@ -144,8 +144,8 @@ SEC("perf_event")
 int sample_stack_trace(struct bpf_perf_event_data* ctx)
 {
 	char exe_path_dbg_fmt[] = "pid=%d comm=%s exe_path=%s\n";
-	struct stack_trace_key_t key;
-	struct histogram_value_t *value;
+	histogram_key_t key;
+	histogram_value_t *value;
 	struct bpf_perf_event_value value_buf;
 	u64 one = 1;
 	char comm[TASK_COMM_LEN];
@@ -168,12 +168,12 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 
 	bpf_get_current_comm(&comm, sizeof(comm));
 
-	value = (struct histogram_value_t*)bpf_map_lookup_elem(&histogram, &key);
+	value = (histogram_value_t*)bpf_map_lookup_elem(&histogram, &key);
 	if (value) {
 		(*value).count++;
 		(*value).exe_path = exe_path;
 	} else {
-		struct histogram_value_t value = { .count = one, .exe_path = exe_path};
+		histogram_value_t value = { .count = one, .exe_path = exe_path};
 		bpf_map_update_elem(&histogram, &key, &value, BPF_NOEXIST);
 		bpf_trace_printk(exe_path_dbg_fmt, sizeof(exe_path_dbg_fmt), key.pid, comm, exe_path);
 	}

@@ -12,18 +12,18 @@
 #define LIMIT_PATH_SIZE(x)	((x) & (MAX_PATH_SIZE - 1))
 #define MAX_PATH_COMPONENTS 	20
 
-struct stack_trace_key_t {
+typedef struct histogram_key {
 	u32 pid;
 	u32 kernel_stack_id;
 	u32 user_stack_id;
-};
+} histogram_key_t;
 
-struct histogram_value_t {
+typedef struct histogram_value {
 	u64 count;
-	char *exe_path;
-};
+	const char *exe_path;
+} histogram_value_t;
 
-struct buffer {
+typedef struct buffer {
 	u8 data[MAX_PERCPU_ARRAY_SIZE];
-};
+} buffer_t;
 
