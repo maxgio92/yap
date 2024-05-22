@@ -4,6 +4,7 @@ import (
 	"C"
 	"bytes"
 	"context"
+	"debug/elf"
 	"encoding/binary"
 	"fmt"
 	"runtime"
@@ -181,14 +182,14 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 			return nil, errors.Wrap(err, fmt.Sprintf("error reading the stack profile count key %v", k))
 		}
 
-		exePath, err := t.getExePath(binprmInfo, key.Pid)
-		if err != nil {
-			return nil, errors.Wrap(err, "error getting exe path item")
-		}
-
 		// Skip stack profile counts of other tasks.
 		if int(key.Pid) != t.pid {
 			continue
+		}
+
+		exePath, err := t.getExePath(binprmInfo, key.Pid)
+		if err != nil {
+			return nil, errors.Wrap(err, "error getting exe path item")
 		}
 
 		t.logger.Debug().Int32("pid", key.Pid).Str("exe_path", *exePath).Int("stack trace count", count).Msg("got stack traces")
@@ -196,12 +197,12 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		var symbols string
 
 		if int32(key.UserStackId) >= 0 {
-			st, err := t.getStackTrace(stackTraces, key.UserStackId)
+			trace, err := t.getStackTrace(stackTraces, key.UserStackId)
 			if err != nil {
 				t.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
 			}
-			symbols += getSymbols(t.pid, st, true)
+			symbols += getSymbols(t.pid, trace, *exePath, true)
 		}
 
 		if int32(key.KernelStackId) >= 0 {
@@ -210,7 +211,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 				t.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
 			}
-			symbols += getSymbols(t.pid, st, false)
+			symbols += getSymbols(t.pid, st, *exePath, false)
 		}
 
 		// Increment the countTable map value for the stack trace symbol string (e.g. "main;subfunc;")
@@ -253,19 +254,42 @@ func (t *Profile) getStackTrace(stackTraces *bpf.BPFMap, id uint32) (*StackTrace
 	return &stackTrace, nil
 }
 
-func getSymbols(pid int, stackTrace *StackTrace, user bool) string {
+func getSymbols(pid int, stackTrace *StackTrace, exePath string, user bool) string {
 	var symbols string
 	if !user {
 		pid = -1
 	}
 
-	// TODO: implement symbolization.
-
 	for _, ip := range stackTrace {
 		if ip != 0 {
-			symbols += fmt.Sprintf("%#016x;", ip)
+			s, err := getSymFromElf(exePath, ip)
+			if err != nil || s == "" {
+				symbols += fmt.Sprintf("%#016x;", ip)
+			} else {
+				symbols += fmt.Sprintf("%s;", s)
+			}
 		}
 	}
 
 	return symbols
+}
+
+func getSymFromElf(exePath string, ip uint64) (string, error) {
+	bin, err := elf.Open(exePath)
+	if err != nil {
+		return "", err
+	}
+	syms, err := bin.Symbols()
+	if err != nil {
+		return "", err
+	}
+
+	var symS string
+	for _, s := range syms {
+		if ip >= s.Value && ip < (s.Value+s.Size) {
+			symS = s.Name
+		}
+	}
+
+	return symS, nil
 }

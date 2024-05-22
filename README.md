@@ -11,7 +11,7 @@ A simple sampling eBPF program attached to a timer collects:
 The data collected from the kernel is analysed in user-space to summarise residency fraction.
 That is, for a stack trace, the percentage of samples that contained that path out of the total amount of samples.
 
-This information exctracted from the collected data expresses, for a specific process, which functions are mostly executing.
+This information extracted from the collected data expresses, for a specific process, which functions are mostly executing.
 
 ## How it works
 
