@@ -72,8 +72,8 @@ func main() {
 	}
 
 	// Print stack traces residency fraction table.
-	fmt.Println("Residency\tStack trace")
+	fmt.Println("Residency Stack trace")
 	for k, v := range report {
-		fmt.Printf("%.1f%%\t\t%s\n", v*100, k)
+		fmt.Printf("%4.1f%%     %s\n", v*100, k)
 	}
 }
