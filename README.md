@@ -1,8 +1,10 @@
-# Yet Another Profiler
+# Yap
+
+Yet Another Profiler written in Go and eBPF
 
 > This project is in **development** phase.
 
-This is yet another low-overhead kernel-assisted sampling-based CPU time continuous profile. It does not need instrumentation in the profiled binary.
+This is a low-overhead kernel-assisted sampling-based CPU time continuous profile. It does not need instrumentation in the profiled binary.
 
 A simple sampling eBPF program attached to a timer collects:
 - stack traces
@@ -29,9 +31,9 @@ The information about how much a specific stack has been sampled is tracked with
 
 and made available to userspace, alongside the stack traces.
 
-In userspace symbolization is made with frame instruction pointer addresses read from the map.
+In userspace symbolization is made with frame instruction pointer addresses and the ELF symbol table.
 
-Finally the information is extracted as percentage of profile time a stack trace has been executing.
+Finally, the information is extracted as percentage of profile time a stack trace has been executing.
 
 ## Current limitations
 
@@ -41,8 +43,31 @@ Due to the current implementation there are some limitations on the supported bi
 
 ## Quickstart
 
+## Usage
+
+```
+yap [--debug] --pid PID
+Options:
+  -debug
+      Sets log level to debug
+  -pid int
+      The PID of the process
+```
+
+### Example
+
+Considering a go program made it running in background:
+
 ```shell
-$ sudo yap --pid 95541
+go build -v -o myprogram
+./myprogram &
+[1] 95541
+```
+
+Let's profile it:
+
+```shell
+sudo yap --pid 95541
 {"level":"info","message":"collecting data"}
 ^C{"level":"info","message":"terminating..."}
 Residency Stack trace
@@ -65,7 +90,7 @@ make yap
 make yap/bpf
 ```
 
-## Thanks
+## Credits
 
 - Pixie:
   - [pixie-demos/ebpf-profiler](https://github.com/pixie-io/pixie-demos/tree/main/ebpf-profiler)
@@ -75,3 +100,5 @@ make yap/bpf
   - [samples/bpf/trace_event_kern.c](https://github.com/torvalds/linux/blob/8f2c057754b25075aa3da132cd4fd4478cdab854/samples/bpf/trace_event_kern.c)
 - Brendan Gregg:
   - [Linux eBPF Stack Trace Hack](https://www.brendangregg.com/blog/2016-01-18/ebpf-stack-trace-hack.html)
+- Aqua Security
+  - [Tracee](https://github.com/aquasecurity/tracee)
