@@ -1,4 +1,4 @@
-PROGRAM := profiler
+PROGRAM := yap
 
 # dependencies
 

@@ -33,39 +33,22 @@ In userspace symbolization is made with frame instruction pointer addresses read
 
 Finally the information is extracted as percentage of profile time a stack trace has been executing.
 
+## Current limitations
+
+Due to the current implementation there are some limitations on the supported binaries to make CPU profiling properly work and finally provide a meaningful report:
+* because it leverages frame pointers for stack unwinding, binaries compiled without frame pointers are not currently supported.
+* because it leverages the ELF symbol table (`.symtab` section) for the symbolization, stripped binaries are not supported in the current version. By the way, debug symbol are not required to be included in the final binary to make symbolization properly work.
+
 ## Quickstart
 
 ```shell
-$ sudo profiler --pid 591488
-{"level":"debug","message":"loading ebpf object"}
-{"level":"debug","message":"getting the loaded ebpf program"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #0"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #1"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #2"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #3"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #4"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #5"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #6"}
-{"level":"debug","message":"opening the sampling software cpu block perf event"}
-{"level":"debug","message":"attaching the ebpf program to the sampling perf event for cpu #7"}
+$ sudo yap --pid 95541
 {"level":"info","message":"collecting data"}
-
 ^C{"level":"info","message":"terminating..."}
-{"level":"info","message":"received signal, analysing data"}
-{"level":"debug","message":"getting the stack traces ebpf map"}
-{"level":"debug","message":"getting the stack trace counts (histogram) ebpf maps"}
-{"level":"debug","message":"iterating over the retrieved histogram items"}
-
-70% main(); compute(); matrix_multiply()
-10% main(); read_data(); read_file()
- 5% main(); compute(); matrix_multiply(); prepare()
+Residency Stack trace
+ 2.6%     main.main;runtime.main;runtime.goexit.abi0;
+65.3%     main.foo;runtime.main;runtime.goexit.abi0;
+32.1%     main.bar;runtime.main;runtime.goexit.abi0;
 ```
 
 ## Build
@@ -73,13 +56,13 @@ $ sudo profiler --pid 591488
 ### Build all
 
 ```shell
-make profiler
+make yap
 ```
 
 ### eBPF probe only
 
 ```shell
-make profiler/bpf
+make yap/bpf
 ```
 
 ## Thanks
