@@ -3,7 +3,7 @@ package symcache_test
 import (
 	"testing"
 
-	"github.com/maxgio92/cpu-profiler/pkg/symcache"
+	"github.com/maxgio92/yap/pkg/symcache"
 )
 
 func TestNewSymCache(t *testing.T) {

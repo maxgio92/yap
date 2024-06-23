@@ -46,7 +46,7 @@ Due to the current implementation there are some limitations on the supported bi
 ## Usage
 
 ```
-yap [--debug] --pid PID
+yap profile [--debug] --pid PID
 Options:
   -debug
       Sets log level to debug
@@ -67,7 +67,7 @@ go build -v -o myprogram
 Let's profile it:
 
 ```shell
-sudo yap --pid 95541
+sudo yap profile --pid 95541
 {"level":"info","message":"collecting data"}
 ^C{"level":"info","message":"terminating..."}
 Residency Stack trace

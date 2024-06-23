@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/maxgio92/cpu-profiler/pkg/symcache"
-	"github.com/maxgio92/cpu-profiler/pkg/symtable"
+	"github.com/maxgio92/yap/pkg/symcache"
+	"github.com/maxgio92/yap/pkg/symtable"
 	"runtime"
 	"unsafe"
 
