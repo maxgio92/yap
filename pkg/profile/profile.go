@@ -4,9 +4,10 @@ import (
 	"C"
 	"bytes"
 	"context"
-	"debug/elf"
 	"encoding/binary"
 	"fmt"
+	"github.com/maxgio92/cpu-profiler/pkg/symcache"
+	"github.com/maxgio92/cpu-profiler/pkg/symtable"
 	"runtime"
 	"unsafe"
 
@@ -38,6 +39,8 @@ type Profile struct {
 	mapStackTraces       string
 	mapHistogram         string
 	logger               log.Logger
+	symCache             *symcache.SymCache
+	symTabELF            *symtable.ELFSymTab
 }
 
 func NewProfile(opts ...ProfileOption) *Profile {
@@ -45,6 +48,8 @@ func NewProfile(opts ...ProfileOption) *Profile {
 	for _, f := range opts {
 		f(profile)
 	}
+	profile.symCache = symcache.NewSymCache()
+	profile.symTabELF = symtable.NewELFSymTab()
 
 	return profile
 }
@@ -192,6 +197,10 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 			return nil, errors.Wrap(err, "error getting exe path item")
 		}
 
+		if err = t.symTabELF.Load(*exePath); err != nil {
+			t.logger.Err(err).Msg("error loading the ELF symtable")
+		}
+
 		t.logger.Debug().Int32("pid", key.Pid).Str("exe_path", *exePath).Int("stack trace count", count).Msg("got stack traces")
 
 		var symbols string
@@ -202,7 +211,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 				t.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
 			}
-			symbols += getSymbols(t.pid, trace, *exePath, true)
+			symbols += t.getTraceSymbols(t.pid, trace, true)
 		}
 
 		if int32(key.KernelStackId) >= 0 {
@@ -211,7 +220,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 				t.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
 			}
-			symbols += getSymbols(t.pid, st, *exePath, false)
+			symbols += t.getTraceSymbols(t.pid, st, false)
 		}
 
 		// Increment the countTable map value for the stack trace symbol string (e.g. "main;subfunc;")
@@ -254,42 +263,27 @@ func (t *Profile) getStackTrace(stackTraces *bpf.BPFMap, id uint32) (*StackTrace
 	return &stackTrace, nil
 }
 
-func getSymbols(pid int, stackTrace *StackTrace, exePath string, user bool) string {
+func (p *Profile) getTraceSymbols(pid int, stackTrace *StackTrace, user bool) string {
 	var symbols string
 	if !user {
 		pid = -1
 	}
 
 	for _, ip := range stackTrace {
-		if ip != 0 {
-			s, err := getSymFromElf(exePath, ip)
+		if ip == 0 {
+			continue
+		}
+		// Try with the per-process symbol cache.
+		s, err := p.symCache.Get(ip)
+		if err != nil {
+			// Try with the ELF symtable section.
+			s, err = p.symTabELF.GetSymbol(ip)
 			if err != nil || s == "" {
 				symbols += fmt.Sprintf("%#016x;", ip)
-			} else {
-				symbols += fmt.Sprintf("%s;", s)
 			}
 		}
+		symbols += fmt.Sprintf("%s;", s)
 	}
 
 	return symbols
-}
-
-func getSymFromElf(exePath string, ip uint64) (string, error) {
-	bin, err := elf.Open(exePath)
-	if err != nil {
-		return "", err
-	}
-	syms, err := bin.Symbols()
-	if err != nil {
-		return "", err
-	}
-
-	var symS string
-	for _, s := range syms {
-		if ip >= s.Value && ip < (s.Value+s.Size) {
-			symS = s.Name
-		}
-	}
-
-	return symS, nil
 }
