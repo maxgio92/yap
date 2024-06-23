@@ -2,7 +2,7 @@
 
 Yet Another Profiler written in Go and eBPF
 
-> This project is in **development** phase.
+> This is an experimental project. Use at your own risk.
 
 This is a low-overhead kernel-assisted sampling-based CPU time continuous profile. It does not need instrumentation in the profiled binary.
 
