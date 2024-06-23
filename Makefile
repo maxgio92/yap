@@ -29,7 +29,7 @@ LIBBPFGO := libbpfgo
 # frontend
 
 CGO_CFLAGS = "-I $(current_dir)/$(LIBBPFGO)/output"
-CGO_LDFLAGS = "-lelf -lz $(current_dir)/$(LIBBPFGO)/output/libbpf.a"
+CGO_LDFLAGS = "-lelf -lz $(current_dir)/$(LIBBPFGO)/output/libbpf/libbpf.a"
 
 .PHONY: $(PROGRAM)
 $(PROGRAM): $(LIBBPFGO) | $(PROGRAM)/bpf
@@ -42,7 +42,7 @@ $(PROGRAM): $(LIBBPFGO) | $(PROGRAM)/bpf
 
 .PHONY: $(PROGRAM)/bpf
 $(PROGRAM)/bpf: $(VMLINUXH)
-	clang $(CFLAGS) -g -O2 -c -target bpf -o $(OUTPUT)/profile.bpf.o kernel/profile.bpf.c
+	clang $(CFLAGS) -g -O2 -c -target bpf -o $(OUTPUT)/profile.bpf.o bpf/profile.bpf.c
 
 .PHONY: $(LIBBPFGO)
 $(LIBBPFGO):
@@ -59,9 +59,9 @@ endif
 		echo "ERROR: kernel does not seem to support BTF"; \
 		exit 1; \
 	fi
-	@if [ ! -f kernel/$(VMLINUXH) ]; then \
+	@if [ ! -f bpf/$(VMLINUXH) ]; then \
 		echo "INFO: generating $(VMLINUXH) from $(BTFFILE)"; \
-		$(bpftool) btf dump file $(BTFFILE) format c > kernel/$(VMLINUXH); \
+		$(bpftool) btf dump file $(BTFFILE) format c > bpf/$(VMLINUXH); \
 	fi
 
 $(OUTPUT):
