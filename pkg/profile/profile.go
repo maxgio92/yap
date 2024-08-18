@@ -111,7 +111,6 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 			attr,
 
 			// the specified task.
-			//t.pid,
 			-1,
 
 			// on the Nth CPU.
@@ -149,14 +148,14 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 	t.logger.Debug().Msg("received signal, analysing data")
 	t.logger.Debug().Msg("getting the stack traces ebpf map")
 
-	stackTraces, err := bpfModule.GetMap(t.mapStackTraces)
+	stackTracesMap, err := bpfModule.GetMap(t.mapStackTraces)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapStackTraces))
 	}
 
-	t.logger.Debug().Msg("getting the stack trace counts (histogram) ebpf maps")
+	t.logger.Debug().Msg("getting the stack trace counts (histogramMap) ebpf maps")
 
-	histogram, err := bpfModule.GetMap(t.mapHistogram)
+	histogramMap, err := bpfModule.GetMap(t.mapHistogram)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapHistogram))
 	}
@@ -166,17 +165,17 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", "binprm_info"))
 	}
 
-	// Iterate over the stack profile counts histogram map.
-	countTable := make(map[string]int, 0)
+	// Iterate over the stack profile counts histogramMap map.
+	histogram := make(map[string]int, 0)
 
-	t.logger.Debug().Msg("iterating over the retrieved histogram items")
+	t.logger.Debug().Msg("iterating over the retrieved histogramMap items")
 
-	sampleCount := 0
-	for it := histogram.Iterator(); it.Next(); {
+	totalSamples := 0
+	for it := histogramMap.Iterator(); it.Next(); {
 		k := it.Key()
 
 		// Get count for the specific sampled stack trace.
-		v, err := histogram.GetValue(unsafe.Pointer(&k[0]))
+		v, err := histogramMap.GetValue(unsafe.Pointer(&k[0]))
 		if err != nil {
 			return nil, errors.Wrap(err, fmt.Sprintf("error getting stack profile count for key %v", k))
 		}
@@ -206,7 +205,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		var symbols string
 
 		if int32(key.UserStackId) >= 0 {
-			trace, err := t.getStackTrace(stackTraces, key.UserStackId)
+			trace, err := t.getStackTrace(stackTracesMap, key.UserStackId)
 			if err != nil {
 				t.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
@@ -215,7 +214,7 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		}
 
 		if int32(key.KernelStackId) >= 0 {
-			st, err := t.getStackTrace(stackTraces, key.KernelStackId)
+			st, err := t.getStackTrace(stackTracesMap, key.KernelStackId)
 			if err != nil {
 				t.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
@@ -223,18 +222,18 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 			symbols += t.getTraceSymbols(t.pid, st, false)
 		}
 
-		// Increment the countTable map value for the stack trace symbol string (e.g. "main;subfunc;")
-		sampleCount += count
-		countTable[symbols] += count
+		// Increment the histogram map value for the stack trace symbol string (e.g. "main;subfunc;")
+		totalSamples += count
+		histogram[symbols] += count
 	}
 
-	fractionTable := make(map[string]float64, len(countTable))
-	for trace, count := range countTable {
-		residencyFraction := float64(count) / float64(sampleCount)
-		fractionTable[trace] = residencyFraction
+	residencyTable := make(map[string]float64, len(histogram))
+	for trace, count := range histogram {
+		residency := float64(count) / float64(totalSamples)
+		residencyTable[trace] = residency
 	}
 
-	return fractionTable, nil
+	return residencyTable, nil
 }
 
 func (t Profile) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, error) {
