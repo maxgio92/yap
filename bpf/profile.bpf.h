@@ -20,11 +20,6 @@ typedef struct histogram_key {
 	u32 user_stack_id;
 } histogram_key_t;
 
-typedef struct histogram_value {
-	u64 count;
-	const char *exe_path;
-} histogram_value_t;
-
 typedef struct buffer {
 	u8 data[MAX_PERCPU_ARRAY_SIZE];
 } buffer_t;

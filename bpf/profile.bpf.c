@@ -156,7 +156,6 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 {
 	char hist_insert_fmt[] = "stack trace histogram insert pid=%d comm=%s exe_path=%s\n";
 	histogram_key_t key;
-	histogram_value_t *value;
 	struct bpf_perf_event_value value_buf;
 	u64 *count, one = 1;
 	char comm[TASK_COMM_LEN];
@@ -188,7 +187,7 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 	/* Get current task command */
 	bpf_get_current_comm(&comm, sizeof(comm));
 
-	/* Upsert stack trace histogram */
+	/* Upsert stack trace histogram and binprm_info */
 	count = (u64*)bpf_map_lookup_elem(&histogram, &key);
 	if (count) {
 		(*count)++;
