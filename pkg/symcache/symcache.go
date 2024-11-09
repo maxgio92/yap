@@ -1,8 +1,13 @@
 package symcache
 
 import (
-	"github.com/pkg/errors"
 	"sync"
+
+	"github.com/pkg/errors"
+)
+
+var (
+	ErrKeyDoesNotExist = errors.New("key does not exist")
 )
 
 type addr uint64
@@ -30,7 +35,7 @@ func (s *SymCache) Get(ip uint64) (string, error) {
 	s.lock.RLock()
 	sym, ok := s.syms[addr(ip)]
 	if !ok {
-		return "", errors.New("key does not exist")
+		return "", ErrKeyDoesNotExist
 	}
 	s.lock.RUnlock()
 

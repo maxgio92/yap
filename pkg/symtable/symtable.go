@@ -2,7 +2,12 @@ package symtable
 
 import (
 	"debug/elf"
+
 	"github.com/pkg/errors"
+)
+
+var (
+	ErrSymNotLoaded = errors.New("ELF symbols not loaded")
 )
 
 // ELFSymTab is one of the possible abstractions around executable
@@ -40,7 +45,7 @@ func (e *ELFSymTab) Load(pathname string) error {
 func (e *ELFSymTab) GetSymbol(ip uint64) (string, error) {
 	var sym string
 	if e.symtab == nil {
-		return "", errors.New("ELF symbols not loaded")
+		return "", ErrSymNotLoaded
 	}
 	for _, s := range e.symtab {
 		if ip >= s.Value && ip < (s.Value+s.Size) {
