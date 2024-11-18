@@ -78,6 +78,13 @@ Residency Stack trace
 
 ## Build
 
+### Prerequisites
+
+* clang
+* libbpf-dev
+* libelf (optional: required to build bpftool)
+* zlib (optional: required by bpftool)
+
 ### Build all
 
 ```shell
