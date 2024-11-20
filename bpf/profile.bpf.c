@@ -135,6 +135,9 @@ static __always_inline buffer_t *get_buffer(int idx)
  */
 static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 {
+	char debug_fmt[] = "string_buf is NULL\n";
+	char path_fmt[] = "path is %s\n";
+
 	/*
 	 * Get ref file path from the task's user space memory mapping descriptor.
 	 * exe_file->f_path could also be accessed from current task's binprm struct 
@@ -144,8 +147,11 @@ static __always_inline void *get_task_exe_pathname(struct task_struct *task)
 
 	buffer_t *string_buf = get_buffer(0);
 	if (string_buf == NULL) {
+		bpf_trace_printk(debug_fmt, sizeof(debug_fmt));
 		return NULL;
 	}
+	bpf_trace_printk(path_fmt, sizeof(path_fmt), path);
+
 	/* Write path string from path struct to the buffer */
 	size_t buf_off = get_pathname_from_path(&path, string_buf);
 	return &string_buf->data[buf_off];
@@ -155,6 +161,8 @@ SEC("perf_event")
 int sample_stack_trace(struct bpf_perf_event_data* ctx)
 {
 	char hist_insert_fmt[] = "stack trace histogram insert pid=%d comm=%s exe_path=%s\n";
+	char debug_fmt[] = "pid=%d comm=%s exe_path=%s\n";
+
 	histogram_key_t key;
 	struct bpf_perf_event_value value_buf;
 	u64 *count, one = 1;
@@ -167,14 +175,6 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 
 	/* Get current task executable pathname */
 	task = (struct task_struct *)bpf_get_current_task(); /* Current task struct */
-	exe_path = get_task_exe_pathname(task);
-	if (exe_path == NULL) {
-		return 0;
-	}
-	len = bpf_core_read_str(&exe_path_str, sizeof(exe_path_str), exe_path);
-	if (len < 0) {
-		return 0;
-	}
 
 	/* Sample the user and kernel stack traces, and record in the stack_traces structure. */
 	key.pid = bpf_get_current_pid_tgid() >> 32;
@@ -187,6 +187,16 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 	/* Get current task command */
 	bpf_get_current_comm(&comm, sizeof(comm));
 
+	exe_path = get_task_exe_pathname(task);
+	//bpf_trace_printk(debug_fmt, sizeof(debug_fmt), key.pid, comm, exe_path_str);
+	if (exe_path == NULL) {
+		return 0;
+	}
+	len = bpf_core_read_str(&exe_path_str, sizeof(exe_path_str), exe_path);
+	if (len < 0) {
+		return 0;
+	}
+
 	/* Upsert stack trace histogram and binprm_info */
 	count = (u64*)bpf_map_lookup_elem(&histogram, &key);
 	if (count) {
@@ -194,7 +204,7 @@ int sample_stack_trace(struct bpf_perf_event_data* ctx)
 	} else {
 		bpf_map_update_elem(&histogram, &key, &one, BPF_NOEXIST);
 		bpf_map_update_elem(&binprm_info, &key.pid, &exe_path_str, BPF_ANY);
-		bpf_trace_printk(hist_insert_fmt, sizeof(hist_insert_fmt), key.pid, comm, exe_path_str);
+		//bpf_trace_printk(hist_insert_fmt, sizeof(hist_insert_fmt), key.pid, comm, exe_path_str);
 	}
 
 	return 0;
