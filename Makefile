@@ -51,8 +51,10 @@ $(PROGRAM)/bpf: $(VMLINUXH)
 
 .PHONY: $(LIBBPFGO)
 $(LIBBPFGO):
-	$(git) clone $(LIBBPFGO_GIT) && \
-	make -C $(LIBBPFGO) libbpfgo-static
+	{ test -d $(LIBBPFGO) && make -C $(LIBBPFGO) libbpfgo-static; } \
+	|| { $(git) submodule init && \
+	$(git) submodule update --recursive && \
+	make -C $(LIBBPFGO) libbpfgo-static; }
 
 .PHONY: $(BPFTOOL)
 $(BPFTOOL):
