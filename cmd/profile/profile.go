@@ -35,7 +35,7 @@ func (o *Options) Run(_ *cobra.Command, _ []string) error {
 		o.Logger = o.Logger.Level(log.DebugLevel)
 	}
 
-	profiler := profile.NewProfile(
+	profiler := profile.NewProfiler(
 		profile.WithPID(o.pid),
 		profile.WithSamplingPeriodMillis(11),
 		profile.WithProbeName("sample_stack_trace"),
