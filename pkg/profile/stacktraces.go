@@ -37,7 +37,7 @@ func (p *Profiler) getHumanReadableStackTrace(stackTrace *StackTrace) string {
 		if ip == 0 {
 			continue
 		}
-		s, err := p.symTabELF.GetSymbol(ip)
+		s, err := p.symTabELF.GetName(ip)
 		if err != nil || s == "" {
 			symbols += fmt.Sprintf("%#016x;", ip)
 		}
