@@ -5,6 +5,10 @@ import (
 	"sync"
 )
 
+var (
+	ErrKeyNotFound = errors.New("key not found")
+)
+
 type addr uint64
 type name string
 
@@ -21,18 +25,18 @@ func NewSymCache() *SymCache {
 }
 
 func (s *SymCache) Set(sym string, ip uint64) {
+	defer s.lock.Unlock()
 	s.lock.Lock()
 	s.syms[addr(ip)] = name(sym)
-	s.lock.Unlock()
 }
 
 func (s *SymCache) Get(ip uint64) (string, error) {
+	defer s.lock.RUnlock()
 	s.lock.RLock()
 	sym, ok := s.syms[addr(ip)]
 	if !ok {
-		return "", errors.New("key does not exist")
+		return "", ErrKeyNotFound
 	}
-	s.lock.RUnlock()
 
 	return string(sym), nil
 }
