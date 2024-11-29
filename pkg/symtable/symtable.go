@@ -48,9 +48,8 @@ func (e *ELFSymTab) Load(pathname string) error {
 	return nil
 }
 
-// GetSymbol returns symbol name from an instruction pointer address
-// reading the ELF symbol table.
-func (e *ELFSymTab) GetSymbol(ip uint64) (string, error) {
+// GetName returns symbol name from an instruction pointer address.
+func (e *ELFSymTab) GetName(ip uint64) (string, error) {
 	// Try from cache.
 	sym, err := e.cache.Get(ip)
 	if err != nil {
