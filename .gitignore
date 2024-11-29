@@ -1,6 +1,5 @@
 /profiler
 .idea
 /output
-/libbpfgo
 *.o
 vmlinux.h
