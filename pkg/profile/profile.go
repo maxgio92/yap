@@ -163,7 +163,7 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 				p.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
 			}
-			symbols += p.getSymbolsFromStackTrace(stackTrace)
+			symbols += p.getHumanReadableStackTrace(stackTrace)
 		}
 
 		// Append symbols from kernel stack.
@@ -173,7 +173,7 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 				p.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
 			}
-			symbols += p.getSymbolsFromStackTrace(stackTrace)
+			symbols += p.getHumanReadableStackTrace(stackTrace)
 		}
 
 		// Increment the histogram map value for the stack trace symbol string (e.g. "main;subfunc;")
