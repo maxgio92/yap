@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/maxgio92/yap/pkg/symcache"
 	"github.com/maxgio92/yap/pkg/symtable"
+	"sync"
 	"unsafe"
 
 	bpf "github.com/aquasecurity/libbpfgo"
@@ -37,7 +37,6 @@ type Profiler struct {
 	mapStackTraces       string
 	mapHistogram         string
 	logger               log.Logger
-	symCache             *symcache.SymCache
 	symTabELF            *symtable.ELFSymTab
 }
 
@@ -46,7 +45,6 @@ func NewProfiler(opts ...ProfileOption) *Profiler {
 	for _, f := range opts {
 		f(profile)
 	}
-	profile.symCache = symcache.NewSymCache()
 	profile.symTabELF = symtable.NewELFSymTab()
 
 	return profile
@@ -82,6 +80,7 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 	}
 	p.logger.Info().Msg("collecting data")
 
+	// Collect data until interrupt.
 	<-ctx.Done()
 
 	p.logger.Debug().Msg("received signal, analysing data")
@@ -109,6 +108,29 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 
 	totalSamples := 0
 
+	// Try to load symbols.
+	symbolizationWG := &sync.WaitGroup{}
+	symbolizationWG.Add(1)
+
+	var exePath *string
+	go func() {
+		defer symbolizationWG.Done()
+
+		// Get process executable path on filesystem.
+		exePath, err = p.getExePath(binprmInfo, int32(p.pid))
+		if err != nil {
+			p.logger.Debug().Str("path", *exePath).Int("pid", p.pid).Msg("error getting executable path for symbolization")
+			return
+		}
+		p.logger.Debug().Str("path", *exePath).Int("pid", p.pid).Msg("executable path found")
+
+		// Try to load ELF symbol table, if it's an ELF executable.
+		if err = p.symTabELF.Load(*exePath); err != nil {
+			p.logger.Debug().Err(err).Msg("error loading the ELF symbol table")
+			return
+		}
+	}()
+
 	// For each function (HistogramKey) sampled.
 	for it := histogramMap.Iterator(); it.Next(); {
 		k := it.Key()
@@ -127,24 +149,14 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 
 		// Skip stack profile counts of other tasks.
 		if int(key.Pid) != p.pid {
-			p.logger.Debug().Int32("pid", key.Pid).Msg("Skipping process")
 			continue
 		}
-
-		// Get process executable path on filesystem.
-		exePath, err := p.getExePath(binprmInfo, key.Pid)
-		if err != nil {
-			return nil, errors.Wrap(err, "error getting executable path for symbolization")
-		}
-		p.logger.Debug().Str("path", *exePath).Int32("pid", key.Pid).Msg("executable path found")
-
-		// Try to load ELF symbol table, if it's an ELF executable.
-		if err = p.symTabELF.Load(*exePath); err != nil {
-			return nil, errors.Wrap(err, "error loading ELF symbol table")
-		}
-		p.logger.Debug().Int32("pid", key.Pid).Str("path", *exePath).Int("stack trace count", count).Msg("got stack traces")
+		p.logger.Debug().Int("pid", p.pid).Uint32("user_stack_id", key.UserStackId).Uint32("kernel_stack_id", key.KernelStackId).Int("count", count).Msg("got stack traces")
 
 		var symbols string
+
+		// Wait for the symbols to be loaded.
+		symbolizationWG.Wait()
 
 		// Append symbols from user stack.
 		if int32(key.UserStackId) >= 0 {
@@ -153,17 +165,17 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 				p.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
 			}
-			symbols += p.getTraceSymbols(p.pid, stackTrace, true)
+			symbols += p.getSymbolsFromStackTrace(stackTrace)
 		}
 
 		// Append symbols from kernel stack.
 		if int32(key.KernelStackId) >= 0 {
-			st, err := p.getStackTraceByID(stackTracesMap, key.KernelStackId)
+			stackTrace, err := p.getStackTraceByID(stackTracesMap, key.KernelStackId)
 			if err != nil {
 				p.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
 			}
-			symbols += p.getTraceSymbols(p.pid, st, false)
+			symbols += p.getSymbolsFromStackTrace(stackTrace)
 		}
 
 		// Increment the histogram map value for the stack trace symbol string (e.g. "main;subfunc;")

@@ -23,7 +23,7 @@ func (p Profiler) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, err
 	if err == nil {
 		return &vs, nil
 	}
-	p.logger.Err(err).Str("path", vs).Msg("executable file not found")
+	p.logger.Debug().Err(err).Str("path", vs).Msg("executable file not found")
 
 	// Fallback to procfs.
 	path, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
