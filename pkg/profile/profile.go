@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"github.com/maxgio92/yap/pkg/symcache"
 	"github.com/maxgio92/yap/pkg/symtable"
-	"runtime"
 	"unsafe"
 
 	bpf "github.com/aquasecurity/libbpfgo"
 	"github.com/pkg/errors"
 	log "github.com/rs/zerolog"
-	"golang.org/x/sys/unix"
 )
 
 type HistogramKey struct {
@@ -31,7 +29,7 @@ type HistogramKey struct {
 // 127 is the size of the profile, as for the default PERF_MAX_STACK_DEPTH.
 type StackTrace [127]uint64
 
-type Profile struct {
+type Profiler struct {
 	pid                  int
 	samplingPeriodMillis uint64
 	probe                []byte
@@ -43,8 +41,8 @@ type Profile struct {
 	symTabELF            *symtable.ELFSymTab
 }
 
-func NewProfile(opts ...ProfileOption) *Profile {
-	profile := new(Profile)
+func NewProfiler(opts ...ProfileOption) *Profiler {
+	profile := new(Profiler)
 	for _, f := range opts {
 		f(profile)
 	}
@@ -54,110 +52,50 @@ func NewProfile(opts ...ProfileOption) *Profile {
 	return profile
 }
 
-func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
+func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 	bpf.SetLoggerCbs(bpf.Callbacks{
 		Log: func(level int, msg string) {
 			return
 		},
 	})
 
-	bpfModule, err := bpf.NewModuleFromBuffer(t.probe, t.probeName)
+	bpfModule, err := bpf.NewModuleFromBuffer(p.probe, p.probeName)
 	if err != nil {
 		return nil, errors.Wrap(err, "error creating the BPF module object")
 	}
 	defer bpfModule.Close()
-
-	t.logger.Debug().Msg("loading ebpf object")
+	p.logger.Debug().Msg("loading BPF object")
 
 	if err := bpfModule.BPFLoadObject(); err != nil {
 		return nil, errors.Wrap(err, "error loading the BPF program")
 	}
+	p.logger.Debug().Msg("getting the loaded BPF program")
 
-	t.logger.Debug().Msg("getting the loaded ebpf program")
-
-	prog, err := bpfModule.GetProgram(t.probeName)
+	prog, err := bpfModule.GetProgram(p.probeName)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting the BPF program object")
 	}
+	p.logger.Debug().Msg("attaching the BPF program sampler")
 
-	cpusonline := runtime.NumCPU()
-
-	for i := 0; i < cpusonline; i++ {
-
-		// The perf event attribute set.
-		attr := &unix.PerfEventAttr{
-
-			// If type is PERF_TYPE_SOFTWARE, we are measuring software events provided by the kernel.
-			Type: unix.PERF_TYPE_SOFTWARE,
-
-			// This reports the CPU clock, a high-resolution per-CPU timer.
-			Config: unix.PERF_COUNT_SW_CPU_CLOCK,
-
-			// A "sampling" event is one that generates an overflow notification every N events,
-			// where N is given by sample_period.
-			// sample_freq can be used if you wish to use frequency rather than period.
-			// sample_period and sample_freq are mutually exclusive.
-			// The kernel will adjust the sampling period to try and achieve the desired rate.
-			Sample: t.samplingPeriodMillis * 1000 * 1000,
-		}
-
-		t.logger.Debug().Msg("opening the sampling software cpu block perf event")
-
-		// Create the perf event file descriptor that corresponds to one event that is measured.
-		// We're measuring a clock timer software event just to run the program on a periodic schedule.
-		// When a specified number of clock samples occur, the kernel will trigger the program.
-		evt, err := unix.PerfEventOpen(
-			// The attribute set.
-			attr,
-
-			// the specified task.
-			-1,
-
-			// on the Nth CPU.
-			i,
-
-			// The group_fd argument allows event groups to be created. An event group has one event which
-			// is the group leader. A single event on its own is created with group_fd = -1 and is considered
-			// to be a group with only 1 member.
-			-1,
-
-			// The flags.
-			0,
-		)
-		if err != nil {
-			return nil, errors.Wrap(err, "error creating the perf event")
-		}
-		defer func() {
-			if err := unix.Close(evt); err != nil {
-				t.logger.Fatal().Err(err).Msg("failed to close perf event")
-			}
-		}()
-
-		t.logger.Debug().Msgf("attaching the ebpf program to the sampling perf event for cpu #%d", i)
-
-		// Attach the BPF program to the sampling perf event.
-		if _, err = prog.AttachPerfEvent(evt); err != nil {
-			return nil, errors.Wrap(err, "error attaching the BPF probe to the sampling perf event")
-		}
+	if err = p.attachSampler(prog); err != nil {
+		return nil, errors.Wrap(err, "error attaching the sampler")
 	}
-
-	t.logger.Info().Msg("collecting data")
+	p.logger.Info().Msg("collecting data")
 
 	<-ctx.Done()
 
-	t.logger.Debug().Msg("received signal, analysing data")
-	t.logger.Debug().Msg("getting the stack traces ebpf map")
+	p.logger.Debug().Msg("received signal, analysing data")
+	p.logger.Debug().Msg("getting the stack traces BPF map")
 
-	stackTracesMap, err := bpfModule.GetMap(t.mapStackTraces)
+	stackTracesMap, err := bpfModule.GetMap(p.mapStackTraces)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapStackTraces))
+		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", p.mapStackTraces))
 	}
+	p.logger.Debug().Msg("getting the stack trace counts (histogramMap) BPF maps")
 
-	t.logger.Debug().Msg("getting the stack trace counts (histogramMap) ebpf maps")
-
-	histogramMap, err := bpfModule.GetMap(t.mapHistogram)
+	histogramMap, err := bpfModule.GetMap(p.mapHistogram)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", t.mapHistogram))
+		return nil, errors.Wrap(err, fmt.Sprintf("error getting %s BPF map", p.mapHistogram))
 	}
 
 	binprmInfo, err := bpfModule.GetMap("binprm_info")
@@ -167,10 +105,11 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 
 	// Iterate over the stack profile counts histogramMap map.
 	histogram := make(map[string]int, 0)
-
-	t.logger.Debug().Msg("iterating over the retrieved histogramMap items")
+	p.logger.Debug().Msg("iterating over the retrieved histogramMap items")
 
 	totalSamples := 0
+
+	// For each function (HistogramKey) sampled.
 	for it := histogramMap.Iterator(); it.Next(); {
 		k := it.Key()
 
@@ -187,39 +126,44 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		}
 
 		// Skip stack profile counts of other tasks.
-		if int(key.Pid) != t.pid {
+		if int(key.Pid) != p.pid {
+			p.logger.Debug().Int32("pid", key.Pid).Msg("Skipping process")
 			continue
 		}
 
-		exePath, err := t.getExePath(binprmInfo, key.Pid)
+		// Get process executable path on filesystem.
+		exePath, err := p.getExePath(binprmInfo, key.Pid)
 		if err != nil {
-			return nil, errors.Wrap(err, "error getting exe path item")
+			return nil, errors.Wrap(err, "error getting executable path for symbolization")
 		}
+		p.logger.Debug().Str("path", *exePath).Int32("pid", key.Pid).Msg("executable path found")
 
-		if err = t.symTabELF.Load(*exePath); err != nil {
-			t.logger.Err(err).Msg("error loading the ELF symtable")
+		// Try to load ELF symbol table, if it's an ELF executable.
+		if err = p.symTabELF.Load(*exePath); err != nil {
+			return nil, errors.Wrap(err, "error loading ELF symbol table")
 		}
-
-		t.logger.Debug().Int32("pid", key.Pid).Str("exe_path", *exePath).Int("stack trace count", count).Msg("got stack traces")
+		p.logger.Debug().Int32("pid", key.Pid).Str("path", *exePath).Int("stack trace count", count).Msg("got stack traces")
 
 		var symbols string
 
+		// Append symbols from user stack.
 		if int32(key.UserStackId) >= 0 {
-			trace, err := t.getStackTrace(stackTracesMap, key.UserStackId)
+			stackTrace, err := p.getStackTraceByID(stackTracesMap, key.UserStackId)
 			if err != nil {
-				t.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
+				p.logger.Err(err).Uint32("id", key.UserStackId).Msg("error getting user stack trace")
 				return nil, errors.Wrap(err, "error getting user stack")
 			}
-			symbols += t.getTraceSymbols(t.pid, trace, true)
+			symbols += p.getTraceSymbols(p.pid, stackTrace, true)
 		}
 
+		// Append symbols from kernel stack.
 		if int32(key.KernelStackId) >= 0 {
-			st, err := t.getStackTrace(stackTracesMap, key.KernelStackId)
+			st, err := p.getStackTraceByID(stackTracesMap, key.KernelStackId)
 			if err != nil {
-				t.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
+				p.logger.Err(err).Uint32("id", key.KernelStackId).Msg("error getting kernel stack trace")
 				return nil, errors.Wrap(err, "error getting kernel stack")
 			}
-			symbols += t.getTraceSymbols(t.pid, st, false)
+			symbols += p.getTraceSymbols(p.pid, st, false)
 		}
 
 		// Increment the histogram map value for the stack trace symbol string (e.g. "main;subfunc;")
@@ -227,62 +171,5 @@ func (t *Profile) RunProfile(ctx context.Context) (map[string]float64, error) {
 		histogram[symbols] += count
 	}
 
-	residencyTable := make(map[string]float64, len(histogram))
-	for trace, count := range histogram {
-		residency := float64(count) / float64(totalSamples)
-		residencyTable[trace] = residency
-	}
-
-	return residencyTable, nil
-}
-
-func (t Profile) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, error) {
-	v, err := binprmInfoMap.GetValue(unsafe.Pointer(&pid))
-	if err != nil {
-		return nil, err
-	}
-	v = v[:clen(v)]
-	vs := string(v)
-
-	return &vs, nil
-}
-
-func (t *Profile) getStackTrace(stackTraces *bpf.BPFMap, id uint32) (*StackTrace, error) {
-	stackBinary, err := stackTraces.GetValue(unsafe.Pointer(&id))
-	if err != nil {
-		return nil, err
-	}
-
-	var stackTrace StackTrace
-	err = binary.Read(bytes.NewBuffer(stackBinary), binary.LittleEndian, &stackTrace)
-	if err != nil {
-		return nil, err
-	}
-
-	return &stackTrace, nil
-}
-
-func (p *Profile) getTraceSymbols(pid int, stackTrace *StackTrace, user bool) string {
-	var symbols string
-	if !user {
-		pid = -1
-	}
-
-	for _, ip := range stackTrace {
-		if ip == 0 {
-			continue
-		}
-		// Try with the per-process symbol cache.
-		s, err := p.symCache.Get(ip)
-		if err != nil {
-			// Try with the ELF symtable section.
-			s, err = p.symTabELF.GetSymbol(ip)
-			if err != nil || s == "" {
-				symbols += fmt.Sprintf("%#016x;", ip)
-			}
-		}
-		symbols += fmt.Sprintf("%s;", s)
-	}
-
-	return symbols
+	return p.buildResidencyTable(histogram, totalSamples), nil
 }
