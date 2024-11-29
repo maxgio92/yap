@@ -11,7 +11,7 @@ import (
 // getExePath returns the path of the executable for the specified process ID.
 // It checks the validity of the path shared in the binprm BPF hash map.
 // It falls back to the proc filesystem.
-func (p Profiler) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, error) {
+func (p *Profiler) getExePath(binprmInfoMap *bpf.BPFMap, pid int32) (*string, error) {
 	v, err := binprmInfoMap.GetValue(unsafe.Pointer(&pid))
 	if err != nil {
 		return nil, err
