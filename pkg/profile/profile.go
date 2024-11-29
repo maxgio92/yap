@@ -111,13 +111,11 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 	// Try to load symbols.
 	symbolizationWG := &sync.WaitGroup{}
 	symbolizationWG.Add(1)
-
-	var exePath *string
 	go func() {
 		defer symbolizationWG.Done()
 
 		// Get process executable path on filesystem.
-		exePath, err = p.getExePath(binprmInfo, int32(p.pid))
+		exePath, err := p.getExePath(binprmInfo, int32(p.pid))
 		if err != nil {
 			p.logger.Debug().Str("path", *exePath).Int("pid", p.pid).Msg("error getting executable path for symbolization")
 			return
