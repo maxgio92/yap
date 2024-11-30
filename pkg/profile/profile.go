@@ -6,9 +6,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/maxgio92/yap/pkg/symtable"
 	"sync"
 	"unsafe"
+
+	"github.com/maxgio92/yap/pkg/symtable"
 
 	bpf "github.com/aquasecurity/libbpfgo"
 	"github.com/pkg/errors"
@@ -117,7 +118,7 @@ func (p *Profiler) RunProfile(ctx context.Context) (map[string]float64, error) {
 		// Get process executable path on filesystem.
 		exePath, err := p.getExePath(binprmInfo, int32(p.pid))
 		if err != nil {
-			p.logger.Debug().Str("path", *exePath).Int("pid", p.pid).Msg("error getting executable path for symbolization")
+			p.logger.Debug().Int("pid", p.pid).Msg("error getting executable path for symbolization")
 			return
 		}
 		p.logger.Debug().Str("path", *exePath).Int("pid", p.pid).Msg("executable path found")
